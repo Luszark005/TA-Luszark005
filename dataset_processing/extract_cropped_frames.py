@@ -6,11 +6,17 @@ from facenet_pytorch import MTCNN
 import numpy as np
 from multiprocessing import Pool
 
-# --- KONFIGURASI MULTI-FRAME ---
-NUM_FRAMES = 8 # Jumlah frame yang ingin diekstrak per video (Sesuaikan dengan kebutuhanmu)
-DATASET_CSV = 'dataset/annotation.csv'
-FRAMES_DIR = 'frames'
-OUTPUT_DIR = './dataset/images'
+# --- KONFIGURASI DI extract_cropped_frames.py ---
+NUM_FRAMES = 8 
+
+# Sesuaikan path agar membaca file yang baru saja kita buat
+DATASET_CSV = 'annotation.csv' 
+
+# Folder asal (hasil dari extract_frames tadi)
+FRAMES_DIR = '/content/frames/' 
+
+# Folder tujuan akhir untuk wajah yang sudah di-crop
+OUTPUT_DIR = '/content/dataset_images/' 
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
