@@ -19,4 +19,5 @@ def join_annotations(base_path):
 
 
 if __name__ == '__main__':
-    join_annotations('../raw')
+    # Arahkan ke folder Dataset_TA di Google Drive kamu
+    join_annotations('/content/drive/MyDrive/Dataset_TA')
