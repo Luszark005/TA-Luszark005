@@ -1,0 +1,21 @@
+# Mengabaikan file video dan gambar
+*.mp4
+*.jpg
+*.jpeg
+*.png
+
+# Mengabaikan matriks dan model AI
+*.npy
+*.pth
+*.pt
+
+# Mengabaikan folder dataset
+dataset/
+images/
+frames/
+emotions/
+video_data/
+pretrain/
+
+# Mengabaikan cache python
+__pycache__/
