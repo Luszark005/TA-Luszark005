@@ -1,104 +1,48 @@
-import pandas as pd
-import cv2
 import os
-import torch
+import cv2
+import pandas as pd
 from facenet_pytorch import MTCNN
-import numpy as np
-from multiprocessing import Pool
+import torch
 
-# --- KONFIGURASI DI extract_cropped_frames.py ---
-NUM_FRAMES = 8 
+# Gunakan GPU jika tersedia agar Cepat!
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+mtcnn = MTCNN(keep_all=False, device=device)
 
-# Sesuaikan path agar membaca file yang baru saja kita buat
-DATASET_CSV = 'annotation.csv' 
-
-# Folder asal (hasil dari extract_frames tadi)
-FRAMES_DIR = '/content/frames/' 
-
-# Folder tujuan akhir untuk wajah yang sudah di-crop
-OUTPUT_DIR = '/content/dataset_images/' 
-
+# --- KONFIGURASI ---
+FRAMES_DIR = '/content/frames/'
+OUTPUT_DIR = '/content/dataset_images/'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def retrieve_video_frames(video_name, all_images):
-    video_basename = os.path.splitext(video_name)[0]
-    # Ambil semua gambar yang namanya mengandung ID video ini
-    video_images = [img for img in all_images if img.startswith(video_basename)]
+df = pd.read_csv('annotation.csv')
+videos = df['video_name'].tolist()
+
+for video_name in videos:
+    # Hilangkan ekstensi .mp4 jika ada untuk mencari base name
+    base_name = video_name.replace('.mp4', '')
     
-    # PENTING: Urutkan frame berdasarkan angka agar urutan waktunya benar
-    def extract_frame_num(filename):
+    # MENCARI SEMUA FRAME MILIK VIDEO INI
+    # Contoh: mencari semua yang diawali '05l5bteT_qA.001_frame'
+    video_frames = [f for f in os.listdir(FRAMES_DIR) if f.startswith(base_name) and f.endswith('.jpg')]
+    
+    if len(video_frames) == 0:
+        print(f"Skip {base_name}: Tidak ditemukan file .jpg di folder frames.")
+        continue
+
+    print(f"Processing: {base_name} ({len(video_frames)} frames)")
+
+    for frame_file in video_frames:
+        img_path = os.path.join(FRAMES_DIR, frame_file)
+        img = cv2.imread(img_path)
+        
+        if img is None: continue
+        
+        # Deteksi dan Crop Wajah
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # MTCNN akan me-return gambar yang sudah di-crop dan di-resize (misal 224)
+        save_path = os.path.join(OUTPUT_DIR, frame_file)
+        
         try:
-            return int(filename.split('_frame')[-1].split('.jpg')[0])
-        except ValueError:
-            return 0
-            
-    video_images.sort(key=extract_frame_num)
-    return video_images
-
-def load_image(path):
-    image = cv2.imread(os.path.join(FRAMES_DIR, path))
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    return image
-
-# Inisialisasi MTCNN
-mtcnn = MTCNN(keep_all=True, device=torch.device("cpu"))
-
-def process_video_chunk(video_chunk):
-    # Baca folder frames sekali saja per chunk agar proses I/O lebih cepat
-    all_images = os.listdir(FRAMES_DIR)
-    
-    for video_name in video_chunk:
-        video_basename = os.path.splitext(video_name)[0]
-        print(f"Processing: {video_basename}")
-        
-        frames = retrieve_video_frames(video_name, all_images)
-        
-        if len(frames) < NUM_FRAMES:
-            print(f"Skip {video_basename}: Hanya memiliki {len(frames)} frames.")
-            continue
-            
-        # 1. UNIFORM SAMPLING (Ambil N frame dengan jarak beraturan)
-        step = len(frames) / NUM_FRAMES
-        selected_indices = [int(i * step) for i in range(NUM_FRAMES)]
-        selected_frames = [frames[i] for i in selected_indices]
-        
-        # 2. BUAT FOLDER KHUSUS UNTUK VIDEO INI
-        # Output: ./dataset/images/NamaVideo/
-        video_out_dir = os.path.join(OUTPUT_DIR, video_basename)
-        os.makedirs(video_out_dir, exist_ok=True)
-        
-        # 3. DETEKSI & POTONG WAJAH UNTUK SETIAP FRAME YANG DIPILIH
-        for i, img_path in enumerate(selected_frames):
-            image = load_image(img_path)
-            boxes, probs, landmarks = mtcnn.detect(image, landmarks=True)
-            
-            h, w, _ = image.shape
-            
-            if boxes is not None:
-                # Ambil wajah utama (probabilitas tertinggi dari MTCNN)
-                x1, y1, x2, y2 = boxes[0]
-                x1, y1, x2, y2 = int(max(0, x1)), int(max(0, y1)), int(min(w, x2)), int(min(h, y2))
-                cropped_face = image[y1:y2, x1:x2]
-            else:
-                # FALLBACK (PENYELAMAT): Jika MTCNN gagal mendeteksi wajah (misal karena blur/menoleh)
-                # Kita terpaksa potong tengah (Center Crop) agar jumlah gambar tetap genap 8 frame.
-                cy, cx = h // 2, w // 2
-                size = min(h, w) // 2
-                cropped_face = image[cy-size:cy+size, cx-size:cx+size]
-                
-            # Resize agar semua wajah ukurannya pasti sama (wajib untuk Transformer)
-            cropped_face = cv2.resize(cropped_face, (224, 224))
-            
-            # Simpan dengan urutan nama: frame_00.jpg, frame_01.jpg, dst
-            out_filename = os.path.join(video_out_dir, f"frame_{i:02d}.jpg")
-            cv2.imwrite(out_filename, cv2.cvtColor(cropped_face, cv2.COLOR_RGB2BGR))
-
-if __name__ == '__main__':
-    df = pd.read_csv(DATASET_CSV)
-    videos = df['video_name'].unique().tolist()
-    
-    chunk_size = max(1, len(videos) // os.cpu_count())
-    video_chunks = [videos[i:i + chunk_size] for i in range(0, len(videos), chunk_size)]
-    
-    with Pool() as pool:
-        pool.map(process_video_chunk, video_chunks)
+            # mtcnn(image, save_path) langsung menyimpan hasil crop wajah
+            mtcnn(img_rgb, save_path=save_path)
+        except Exception as e:
+            print(f"Gagal crop {frame_file}: {e}")
