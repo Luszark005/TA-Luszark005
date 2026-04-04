@@ -3,11 +3,15 @@ import cv2
 import os
 from multiprocessing import Pool
 
-video_folder = './video_data'
-output_folder = './frames'
+# --- UBAH ALAMAT VIDEO KE LOKAL COLAB ---
+video_folder = '/content/dataset_raw/training/'
+
+# Output folder kita buat absolut saja biar aman
+output_folder = '/content/frames/'
 
 os.makedirs(output_folder, exist_ok=True)
 
+# File CSV ini akan dibaca langsung dari folder GitHub yang sudah kamu clone
 df = pd.read_csv('./dataset/annotation.csv')
 
 videos = df['video_name'].tolist()
