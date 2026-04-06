@@ -13,11 +13,13 @@ class FirstImpressionsVideoDataset(Dataset):
         self.transform = transform
         self.num_frames = num_frames
 
+        # Memastikan file anotasi tersedia di folder dataset
         csv_path = os.path.join(data_path, 'annotation.csv')
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"Annotation file not found at {csv_path}")
             
         df = pd.read_csv(csv_path)
+        # Filter data berdasarkan fase (train/validation/test)
         self.data = df[df['phase'] == phase]
 
         self.video_names = self.data['video_name'].apply(lambda x: os.path.splitext(x)[0]).tolist()
@@ -28,43 +30,42 @@ class FirstImpressionsVideoDataset(Dataset):
 
     def __getitem__(self, idx):
         video_basename = self.video_names[idx]
+        # Folder images sekarang merujuk ke folder 'images' hasil penyelarasan
         frames_dir = os.path.join(self.data_path, 'images', video_basename)
         frames = []
         
-        # --- A. LOAD FRAMES (DENGAN STRIDE) ---
-        # Jika folder punya 16 file tapi num_frames=8, kita ambil setiap 2 frame (0, 2, 4...)
-        # Kita asumsi folder berisi setidaknya 8 atau 16 frame
+        # --- A. LOAD FRAMES (LINEAR INDEX) ---
+        # PERBAIKAN: Tidak perlu lagi menggunakan stride karena file sudah 
+        # dinamai berurutan frame_00.jpg s/d frame_07.jpg oleh extract_emotions.py
         for i in range(self.num_frames):
-            stride = 2 if self.num_frames == 8 else 1 
-            frame_idx = i * stride
-            frame_path = os.path.join(frames_dir, f"frame_{frame_idx:02d}.jpg")
+            frame_path = os.path.join(frames_dir, f"frame_{i:02d}.jpg")
             
             try:
                 img = Image.open(frame_path).convert('RGB')
-                img = img.resize((224, 224)) # ✨ WAJIB: Biar tidak error ukuran tensor
+                # Resize tetap dilakukan untuk memastikan kompatibilitas tensor
+                img = img.resize((224, 224)) 
             except FileNotFoundError:
-                # Fallback jika gambar hilang: Hitam polos
+                # Fallback jika gambar hilang: Hitam polos agar tidak crash saat training
                 img = Image.new('RGB', (224, 224), (0, 0, 0))
             frames.append(img)
 
-        # Ubah list gambar jadi satu tensor besar (Batch x C x H x W)
+        # Mengubah list gambar menjadi tensor video [Batch x 3 x 224 x 224]
         frames_tensor = torch.stack([v2.functional.pil_to_tensor(img) for img in frames])
 
         # --- B. LOAD EMOTIONS (.npy) ---
+        # File .npy sekarang berisi urutan 8 emosi yang sudah sinkron dengan gambarnya
         emotion_path = os.path.join(self.data_path, 'emotions', f"{video_basename}.npy")
         try:
             emotions = np.load(emotion_path) 
-            # Logika fleksibel: Jika .npy isinya 16 tapi diminta 8, kita ambil 8 saja
+            
+            # Jika file .npy memiliki dimensi yang berbeda, lakukan penyesuaian otomatis
             if emotions.shape[0] > self.num_frames:
-                # Ambil dengan stride yang sama (0, 2, 4...) agar sinkron dengan gambar
-                indices = np.arange(0, self.num_frames) * (emotions.shape[0] // self.num_frames)
-                emotions = emotions[indices]
+                emotions = emotions[:self.num_frames]
             elif emotions.shape[0] < self.num_frames:
-                # Jika .npy lebih sedikit, lakukan padding
                 padding = np.tile(emotions[-1], (self.num_frames - emotions.shape[0], 1))
                 emotions = np.vstack([emotions, padding])
         except FileNotFoundError:
-            # Fallback: Emosi Netral jika file belum ada
+            # Fallback emosi netral jika file .npy belum diekstrak
             emotions = np.zeros((self.num_frames, 7), dtype=np.float32)
             emotions[:, 6] = 1.0 
             
@@ -72,13 +73,16 @@ class FirstImpressionsVideoDataset(Dataset):
         labels_tensor = torch.tensor(self.labels[idx], dtype=torch.long)
 
         # --- C. AUGMENTASI ---
+        # Menggunakan transformasi torchvision v2 untuk efisiensi
         if self.transform is not None:
             frames_tensor = self.transform(frames_tensor)
 
         return frames_tensor, labels_tensor, emotions_tensor, idx
 
 def get_dataloader(data_path='', batch_size=4, num_workers=4, num_frames=8):
-    # (Transformasi tetap sama seperti kodemu sebelumnya)
+    """Fungsi pembantu untuk membuat DataLoader train dan validation."""
+    
+    # Augmentasi gambar khusus untuk training
     train_transform = v2.Compose([
         v2.Resize((224, 224), antialias=True),
         v2.RandomHorizontalFlip(p=0.5),
@@ -95,6 +99,7 @@ def get_dataloader(data_path='', batch_size=4, num_workers=4, num_frames=8):
     train_dataset = FirstImpressionsVideoDataset(phase='train', data_path=data_path, transform=train_transform, num_frames=num_frames)
     val_dataset = FirstImpressionsVideoDataset(phase='validation', data_path=data_path, transform=val_transform, num_frames=num_frames)
 
+    # Menggunakan pin_memory=True untuk mempercepat transfer data ke GPU
     train_loader = DataLoader(train_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=True, drop_last=True, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False, pin_memory=True)
 
