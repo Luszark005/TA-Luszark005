@@ -2,7 +2,6 @@ import argparse
 import math
 import os
 import datetime
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,234 +13,181 @@ from dataset import get_dataloader
 from model import create_model
 from utils import set_random_seed, Logger, AverageMeter, generate_adaptive_LD, generate_average_weights, get_accuracy, save_checkpoint
 
-parser = argparse.ArgumentParser(description='PyTorch Training Multi-Frame')
+parser = argparse.ArgumentParser(description='PyTorch Training Swin-Emotion Ada-DF')
 # train configs
 parser.add_argument('--epochs', default=75, type=int)
-parser.add_argument('--batch_size', default=4, type=int) # TURUN DRASTIS: Mencegah OOM di GPU
-parser.add_argument('--accumulation_steps', default=4, type=int) # BARU: Gradient Accumulation
-parser.add_argument('--lr', default=0.0001, type=float) # TURUN DRASTIS: Standar untuk Transformer
+parser.add_argument('--batch_size', default=4, type=int) 
+parser.add_argument('--accumulation_steps', default=4, type=int) # Efektif batch size = 16
+parser.add_argument('--lr', default=0.00005, type=float) # LR lebih kecil untuk Swin
 parser.add_argument('--num_classes', default=4, type=int)
-# method configs
+parser.add_argument('--num_frames', default=16, type=int)
+
+# Ada-DF method configs
 parser.add_argument('--threshold', default=0.7, type=float)
-parser.add_argument('--sharpen', action=argparse.BooleanOptionalAction)
+parser.add_argument('--sharpen', action=argparse.BooleanOptionalAction, default=True)
 parser.add_argument('--T', default=1.2, type=float)
-parser.add_argument('--alpha', default=None, type=float)
 parser.add_argument('--beta', default=3, type=int)
 parser.add_argument('--max_weight', default=1.0, type=float)
 parser.add_argument('--min_weight', default=0.2, type=float)
-parser.add_argument('--drop_rate', default=0.2, type=float) # Sesuaikan dengan model Swin
+parser.add_argument('--drop_rate', default=0.2, type=float)
 parser.add_argument('--gamma', default=0.9, type=float)
-parser.add_argument('--label_smoothing', default=0.0, type=float)
-parser.add_argument('--tops', default=0.7, type=float)
 parser.add_argument('--margin_1', default=0.07, type=float)
+parser.add_argument('--tops', default=0.7, type=float)
+
 # common configs
-parser.add_argument('--seed', default=None, type=int)
 parser.add_argument('--data_path', default='./dataset', type=str)
-parser.add_argument('--num_workers', default=4, type=int) # Sesuaikan core CPU
+parser.add_argument('--num_workers', default=4, type=int)
 parser.add_argument('--device_id', default=0, type=int)
 
 args = parser.parse_args()
 
-best_acc=0
-best_epoch = 0
-
-# set device
 device = torch.device(f'cuda:{args.device_id}' if torch.cuda.is_available() else 'cpu')
 
-if args.seed is not None:
-    set_random_seed(args.seed)
-
 def main():
-    global best_acc
-    global best_epoch
-    global device
+    best_acc = 0
+    best_epoch = 0
+    set_random_seed(42)
 
-    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-    logger = Logger('./results_emotions/log-'+timestamp+'.txt')
+    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M')
+    logger = Logger(f'./results_emotions/log-{timestamp}.txt')
     logger.info(args)
+    writer = SummaryWriter(f'./runs/Swin_Emotion_{timestamp}')
 
-    writer = SummaryWriter()
-
-    # initialization LD untuk Ada-DF
+    # 1. Inisialisasi Label Distribution (LD) untuk 5 Trait
     LD = [torch.zeros(args.num_classes, args.num_classes).to(device) for _ in range(5)]
-    LD_maxes = []
-
     for i in range(5):
         for j in range(args.num_classes):
             LD[i][j] = torch.zeros(args.num_classes).fill_((1-args.threshold)/(args.num_classes-1)).scatter_(0, torch.tensor(j), args.threshold)
-        if args.sharpen == True:
+        if args.sharpen:
             LD[i] = torch.pow(LD[i], 1/args.T) / torch.sum(torch.pow(LD[i], 1/args.T), dim=1)
-        LD_maxes.append(torch.max(LD[i], dim=1))
 
-    nan = float('nan')
-    weights_avg = [[nan for i in range(args.num_classes)] for _ in range(5)]
-    weights_max = [[nan for i in range(args.num_classes)] for _ in range(5)]
-    weights_min = [[nan for i in range(args.num_classes)] for _ in range(5)]
+    # 2. Load Model & Data
+    model = create_model(num_classes=args.num_classes, drop_rate=args.drop_rate).to(device)
+    train_loader, val_loader = get_dataloader(args.data_path, args.batch_size, args.num_workers, num_frames=args.num_frames)
 
-    patience = 5
-    counter = 0
-
-    logger.info('Load model Swin Transformer Multi-Frame...')
-    model = create_model(args.num_classes, args.drop_rate, emotion=True).to(device)   
-
-    train_loader, test_loader = get_dataloader(args.data_path, args.batch_size, args.num_workers)
-
-    criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=args.label_smoothing)
+    # 3. Loss & Optimizer (AdamW untuk Swin Transformer)
+    criterion_ce = nn.CrossEntropyLoss(reduction='none')
     criterion_kld = nn.KLDivLoss(reduction='none')
-
-    # BARU: Menggunakan AdamW (Wajib untuk Swin Transformer)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
 
-    logger.info('Start training.')
+    logger.info('Mulai Pelatihan Swin Transformer + Ada-DF...')
 
-    for epoch in range(1, args.epochs+1):
-        logger.info('----------------------------------------------------------')
-        logger.info('Epoch: %d, Learning Rate: %f', epoch, optimizer.param_groups[0]['lr'])
+    for epoch in range(1, args.epochs + 1):
+        # TRAIN
+        tr_loss, tr_ce, tr_kld, a1, a2 = train(train_loader, model, criterion_ce, criterion_kld, optimizer, LD, epoch, args.accumulation_steps)
+        
+        # VALIDATE (Mendapatkan output untuk update LD)
+        val_loss, val_acc, outputs_val, targets_val, weights_val = validate(val_loader, model, criterion_ce, epoch)
 
-        # train (sekarang menerima accumulation_steps)
-        _, train_loss_ce, train_loss_kld, alpha_1, alpha_2 = train(train_loader, model, criterion, criterion_kld, optimizer, LD, epoch, args.accumulation_steps)
-        train_loss, train_acc, outputs_new, targets_new, weights_new = validate(train_loader, model, criterion, epoch, phase='train')
+        # 4. Update Adaptive Distribution (Ada-DF)
+        LD = generate_adaptive_LD(outputs_val, targets_val, args.num_classes, args.threshold, args.sharpen, args.T)
 
-        LD = generate_adaptive_LD(outputs_new, targets_new, args.num_classes, args.threshold, args.sharpen, args.T)
-        LD_maxes = [torch.max(LD[i], dim=1) for i in range(5)]
+        # Logging
+        logger.info(f'Epoch {epoch} | Val Acc: {val_acc:.2f}% | Loss: {val_loss:.4f} | LR: {optimizer.param_groups[0]["lr"]:.6f}')
+        writer.add_scalar('Accuracy/Val', val_acc, epoch)
+        writer.add_scalar('Loss/Val', val_loss, epoch)
 
-        weights_avg, weights_max, weights_min = generate_average_weights(weights_new, targets_new, args.num_classes, args.max_weight, args.min_weight)
-
-        val_loss, val_acc, _, _, _ = validate(test_loader, model, criterion, epoch, phase='val')
-
-        if val_acc > best_acc:
+        # Save Checkpoint
+        is_best = val_acc > best_acc
+        if is_best:
             best_acc = val_acc
-            best_epoch = epoch   
-            counter = 0
-            is_best = True
-        else:
-            counter += 1
-            is_best = False
-
-        logger.info(f'Alpha_1: {alpha_1:.2f}, Alpha_2: {alpha_2:.2f}')
-        logger.info(f'Train Acc: {train_acc:.2f} | Val Acc: {val_acc:.2f}')
-        logger.info(f'Best Acc: {best_acc:.2f} (Epoch {best_epoch})')
-
+            best_epoch = epoch
+        
         save_checkpoint({
-            'epoch': epoch + 1,
+            'epoch': epoch,
             'state_dict': model.state_dict(),
-            'acc': val_acc,
             'best_acc': best_acc,
             'optimizer': optimizer.state_dict(),
-            'class_distributions': [LD[i].detach() for i in range(5)],
-            }, is_best, checkpoint='./checkpoints_emotion')
+        }, is_best, checkpoint='./checkpoints_swin')
 
-        if counter >= patience:
-            logger.info('Early stopping trigger...')
-            break 
+        if epoch - best_epoch > 10: # Early Stopping sederhana
+            logger.info("Early stopping...")
+            break
         
         scheduler.step()
 
-def train(train_loader, model, criterion, criterion_kld, optimizer, LD, epoch, accumulation_steps):
-    if args.alpha is not None:
-        alpha_1, alpha_2 = args.alpha, 1 - args.alpha
-    else:
-        if epoch <= args.beta:
-            alpha_1, alpha_2 = math.exp(-(1-epoch/args.beta)**2), 1
-        else:
-            alpha_1, alpha_2 = 1, math.exp(-(1-args.beta/epoch)**2)
-    
-    losses, losses_ce, losses_kld, losses_rr = AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter()
-
-    pbar = tqdm(enumerate(train_loader), total=len(train_loader))
-    pbar.set_description(f'Epoch [{epoch}/{args.epochs}]')
-
+def train(train_loader, model, criterion_ce, criterion_kld, optimizer, LD, epoch, accumulation_steps):
     model.train()
-    optimizer.zero_grad() # Pindahkan zero_grad ke luar loop untuk gradient accumulation
+    meters = {k: AverageMeter() for k in ['loss', 'ce', 'kld', 'rr']}
+    
+    # Dinamis Alpha untuk Ada-DF
+    if epoch <= args.beta:
+        alpha_1, alpha_2 = math.exp(-(1 - epoch / args.beta)**2), 1
+    else:
+        alpha_1, alpha_2 = 1, math.exp(-(1 - args.beta / epoch)**2)
 
-    for i, (images, labels, emotions, indexes) in pbar:
-        images = images.to(device)
-        labels = labels.permute(1, 0)
-        labels = [label.to(device) for label in labels]
-        emotions = emotions.to(device)
+    optimizer.zero_grad()
+    pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch} [Train]")
 
-        outputs_1, outputs_2, attention_weights = model(images, emotions)
+    for i, (images, labels, emotions, _) in pbar:
+        images, emotions = images.to(device), emotions.to(device)
+        labels = labels.to(device).permute(1, 0) # [5, B]
+
+        out_aux, out_target, attention_weights = model(images, emotions)
         
-        total_loss, total_loss_ce, total_loss_kld, total_RR_loss = 0, 0, 0, 0
-
-        for j in range(5):
+        loss_batch = 0
+        for j in range(5): # Loop OCEAN traits
+            # Rank Regularization Loss
             tops = int(args.batch_size * args.tops)
-
             _, top_idx = torch.topk(attention_weights[j].squeeze(), tops)
-            _, down_idx = torch.topk(attention_weights[j].squeeze(), args.batch_size - tops, largest = False)
+            _, down_idx = torch.topk(attention_weights[j].squeeze(), args.batch_size - tops, largest=False)
+            rr_loss = torch.clamp(torch.mean(attention_weights[j][down_idx]) - torch.mean(attention_weights[j][top_idx]) + args.margin_1, min=0)
 
-            high_group = attention_weights[j][top_idx]
-            low_group = attention_weights[j][down_idx]
-            diff = torch.mean(low_group) - torch.mean(high_group) + args.margin_1
+            # Cross Entropy untuk Auxiliary Branch
+            l_ce = criterion_ce(out_aux[j], labels[j]).mean()
 
-            RR_loss = diff if diff > 0 else torch.tensor(0.0, device=device)
-            loss_ce = criterion(outputs_1[j], labels[j]).mean()
+            # KL Divergence untuk Target Branch
+            # Adaptive Label Fusion: d_fused = w * d_class + (1-w) * d_aux
+            soft_aux = F.softmax(out_aux[j], dim=1)
+            targets_fused = (1 - attention_weights[j]) * soft_aux + attention_weights[j] * LD[j][labels[j]]
+            l_kld = criterion_kld(F.log_softmax(out_target[j], dim=1), targets_fused).sum() / args.batch_size
 
-            attention_weights[j] = attention_weights[j].squeeze(1)
-            attention_weights[j] = ((attention_weights[j] - attention_weights[j].min()) / (attention_weights[j].max() - attention_weights[j].min() + 1e-8)) * (args.max_weight-args.min_weight) + args.min_weight
-            attention_weights[j] = attention_weights[j].unsqueeze(1)
+            loss_batch += (alpha_2 * l_ce + alpha_1 * l_kld + rr_loss)
 
-            targets = (1 - attention_weights[j]) * F.softmax(outputs_1[j], dim=1) + attention_weights[j] * LD[j][labels[j]]
-            loss_kld = criterion_kld(F.log_softmax(outputs_2[j], dim=1), targets).sum() / args.batch_size
+        loss_batch /= 5.0
+        (loss_batch / accumulation_steps).backward()
 
-            loss = alpha_2 * loss_ce + alpha_1 * loss_kld + RR_loss
-            
-            total_loss += loss
-            total_loss_ce += loss_ce
-            total_loss_kld += loss_kld
-            total_RR_loss += RR_loss
-        
-        total_loss /= 5.0
-        
-        # BARU: Pembagian loss untuk Gradient Accumulation
-        loss_to_backward = total_loss / accumulation_steps
-        loss_to_backward.backward()
-
-        # BARU: Eksekusi optimizer hanya setiap N steps
-        if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
+        if (i + 1) % accumulation_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
 
-        losses.update(total_loss.item(), images.size(0))
-        pbar.set_postfix(loss=losses.avg)
+        meters['loss'].update(loss_batch.item(), images.size(0))
+        pbar.set_postfix(loss=meters['loss'].avg)
 
-    return losses.avg, total_loss_ce.item()/5.0, total_loss_kld.item()/5.0, alpha_1, alpha_2
+    return meters['loss'].avg, 0, 0, alpha_1, alpha_2
 
-def validate(test_loader, model, criterion, epoch, phase='train'):
-    losses, accs = AverageMeter(), AverageMeter()
+def validate(loader, model, criterion, epoch):
     model.eval()
-
-    outputs_new = [torch.ones(1, 4).to(device) for _ in range(5)]
-    targets_new = [torch.ones(1).long().to(device) for _ in range(5)]
-    weights_new = [torch.ones(1, 1).float().to(device) for _ in range(5)]
-
-    pbar = tqdm(enumerate(test_loader), total=len(test_loader))
+    meters = {'loss': AverageMeter(), 'acc': AverageMeter()}
     
+    # Store outputs for Ada-DF update
+    outputs_all = [torch.tensor([]).to(device) for _ in range(5)]
+    targets_all = [torch.tensor([], dtype=torch.long).to(device) for _ in range(5)]
+    weights_all = [torch.tensor([]).to(device) for _ in range(5)]
+
     with torch.no_grad():
-        for i, (inputs, targets, emotions, indexes) in pbar:
-            inputs = inputs.to(device)
-            targets = [target.to(device) for target in targets.permute(1, 0)]
-            emotions = emotions.to(device)
+        for images, labels, emotions, _ in tqdm(loader, desc=f"Epoch {epoch} [Val]"):
+            images, emotions = images.to(device), emotions.to(device)
+            labels_list = labels.to(device).permute(1, 0)
 
-            if phase == 'train':
-                outputs, _, attention_weights = model(inputs, emotions)
-            else:
-                _, outputs, attention_weights = model(inputs, emotions)
+            _, out_target, weights = model(images, emotions)
 
-            total_loss, total_acc = 0, 0
+            batch_loss = 0
+            batch_acc = 0
             for j in range(5):
-                loss = criterion(outputs[j], targets[j]).mean()
+                batch_loss += criterion(out_target[j], labels_list[j]).mean()
+                acc, _ = get_accuracy(out_target[j], labels_list[j], topk=(1, 4))
+                batch_acc += acc
+                
+                outputs_all[j] = torch.cat([outputs_all[j], out_target[j]])
+                targets_all[j] = torch.cat([targets_all[j], labels_list[j]])
+                weights_all[j] = torch.cat([weights_all[j], weights[j]])
 
-                outputs_new[j] = torch.cat((outputs_new[j], outputs[j]), dim=0)
-                targets_new[j] = torch.cat((targets_new[j], targets[j]), dim=0)
-                weights_new[j] = torch.cat((weights_new[j], attention_weights[j]), dim=0)
+            meters['loss'].update((batch_loss/5).item(), images.size(0))
+            meters['acc'].update((batch_acc/5).item(), images.size(0))
 
-                top1, _ = get_accuracy(outputs[j], targets[j], topk=(1, 4))
-                total_loss += loss
-                total_acc += top1
-            
-            losses.update((total_loss/5.0).item(), inputs.size(0))
-            accs.update((total_acc/5.0).item(), inputs.size(0))
+    return meters['loss'].avg, meters['acc'].avg, outputs_all, targets_all, weights_all
 
-    return losses.avg, accs.avg, outputs_new, targets_new, weights_new
+if __name__ == '__main__':
+    main()
