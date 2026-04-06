@@ -6,9 +6,9 @@ from tqdm import tqdm
 
 # --- KONFIGURASI ---
 DATASET_CSV = '/content/dataset/annotation.csv'
-IMAGES_DIR = '/content/dataset/images'
+IMAGES_DIR = '/content/dataset_images/'
 EMOTIONS_OUT_DIR = '/content/dataset/emotions'
-NUM_FRAMES = 8  # ✨ Sekarang kita kunci di 8 frame
+NUM_FRAMES = 8 
 
 os.makedirs(EMOTIONS_OUT_DIR, exist_ok=True)
 
@@ -38,7 +38,7 @@ if __name__ == "__main__":
             
         all_frames = sorted([f for f in os.listdir(video_folder) if f.endswith('.jpg')])
         
-        # ✨ LOGIKA STRIDE: Mengambil 8 frame dari total 16 yang ada
+        # LOGIKA STRIDE: Mengambil 8 frame dari total 16 yang ada
         # Jika ada 16 frame, stride = 2 (ambil index 0, 2, 4, 6, 8, 10, 12, 14)
         total_available = len(all_frames)
         stride = max(1, total_available // NUM_FRAMES)
