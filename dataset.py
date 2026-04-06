@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import v2  # Wajib untuk konsistensi Multi-Frame
 
 class FirstImpressionsVideoDataset(Dataset):
-    def __init__(self, phase, data_path, transform=None, num_frames8):
+    def __init__(self, phase, data_path, transform=None, num_frames=8):
         """
         Dataset Multi-Frame yang disesuaikan untuk Swin Transformer & Ada-DF.
         Target: Klasifikasi 4 Kelas (0-3) untuk 5 Trait Big Five.
@@ -39,15 +39,15 @@ class FirstImpressionsVideoDataset(Dataset):
         frames_dir = os.path.join(self.data_path, 'images', video_basename)
         frames = []
         
-        for i in range(self.num_frames):
-            frame_path = os.path.join(frames_dir, f"frame_{i:02d}.jpg")
-            try:
-                img = Image.open(frame_path).convert('RGB')
-                # ✨ TAMBAHKAN BARIS INI: Paksa resize sebelum masuk ke list
-                img = img.resize((224, 224)) 
-            except FileNotFoundError:
-                img = Image.new('RGB', (224, 224), (0, 0, 0))
-            frames.append(img)
+        # Cari bagian ini di dataset.py
+def __getitem__(self, idx):
+    ...
+    # Ubah cara ambil frame_path
+    for i in range(self.num_frames):
+        # Gunakan i*2 jika total frame di folder ada 16 tapi kamu cuma mau ambil 8
+        stride = 2 if self.num_frames == 8 else 1 
+        frame_idx = i * stride
+        frame_path = os.path.join(frames_dir, f"frame_{frame_idx:02d}.jpg")
 
         # Sekarang torch.stack tidak akan protes karena semua ukurannya sudah (3, 224, 224)
         frames_tensor = torch.stack([v2.functional.pil_to_tensor(img) for img in frames])
