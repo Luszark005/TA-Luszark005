@@ -1,42 +1,53 @@
 """
-Discretisasi label kepribadian menjadi 5 kelas berdasarkan 
-kuantil untuk memastikan distribusi kelas yang seimbang, 
-sehingga model dapat belajar dengan lebih efektif tanpa bias 
-terhadap kelas mayoritas.
+discretization.py
+Fungsi: Mengonversi skor kepribadian kontinu (0.0 - 1.0) menjadi label kelas 
+berdasarkan Batas Kuartil (Equal-Frequency Discretization) sesuai metodologi TA.
+Output: Label 0, 1, 2, 3 (4 Kelas: Sangat Rendah, Rendah, Tinggi, Sangat Tinggi).
 """
 
 import pandas as pd
 import numpy as np
-# import torch (Kita tidak butuh torch di tahap ini, jadi dihapus saja biar ringan)
+import os
 
-# 1. BACA FILE DARI FOLDER YANG SAMA
-df = pd.read_csv('annotation.csv')
+def run_discretization(file_path='annotation.csv'):
+    # 1. BACA FILE
+    if not os.path.exists(file_path):
+        print(f"❌ ERROR: File {file_path} tidak ditemukan!")
+        return
 
-# Pelabelanan kepribadian dan dikonversi menjadi nilai numerik
-label_extraversions = df['extraversion'].to_numpy(dtype=np.float32)
-label_neuroticisms = df['neuroticism'].to_numpy(dtype=np.float32)
-label_agreeablenesses = df['agreeableness'].to_numpy(dtype=np.float32)
-label_conscientiousnesses = df['conscientiousness'].to_numpy(dtype=np.float32)
-label_opennesses = df['openness'].to_numpy(dtype=np.float32)
+    df = pd.read_csv(file_path)
+    traits = ['extraversion', 'neuroticism', 'agreeableness', 'conscientiousness', 'openness']
 
-# Discretisasi label kepribadian menjadi 5 kelas berdasarkan kuantil
-def discretize(labels):
-    bins = np.array([0, 0.25, 0.5, 0.75, 1.0])
-    quantiles = np.quantile(labels, bins) 
-    # print(quantiles) # Bisa di-comment agar output terminal tidak kepanjangan
+    print("🔄 Memulai proses diskretisasi kuartil (4 kelas)...")
+
+    # 2. FUNGSI DISKRETISASI (KUARTIL)
+    def discretize(labels):
+        # Menggunakan bins [0, 0.25, 0.5, 0.75, 1.0] untuk membagi 4 bagian (Kuartil)
+        bins = np.array([0, 0.25, 0.5, 0.75, 1.0])
+        
+        # Hitung nilai ambang batas berdasarkan distribusi data asli
+        quantiles = np.quantile(labels, bins) 
+        
+        # Petakan label ke dalam bin (0, 1, 2, 3)
+        # right=True memastikan nilai batas masuk ke bin sebelah kiri (sesuai standar TA)
+        new_labels = np.digitize(labels, quantiles, right=True) - 1
+        
+        # Pastikan tidak ada label di luar rentang 0-3 (menangani edge case minimum)
+        new_labels = np.clip(new_labels, 0, 3)
+        return new_labels
+
+    # 3. APLIKASIKAN PADA SETIAP TRAIT
+    for trait in traits:
+        label_data = df[trait].to_numpy(dtype=np.float32)
+        df[trait] = discretize(label_data)
+
+    # 4. SIMPAN KEMBALI
+    df.to_csv(file_path, index=False)
+    print(f"✅ SUCCESS: Diskretisasi selesai! File {file_path} diperbarui dengan label 0-3.")
     
-    # 2. PERBAIKAN TYPO: np.digitize (tanpa spasi)
-    labels = np.digitize(labels, quantiles, right=True) - 1
-    # print(labels)
-    return labels
+    # Tampilkan distribusi singkat untuk verifikasi
+    print("\n📊 Distribusi Kelas per Dimensi (Harusnya seimbang):")
+    print(df[traits].apply(pd.Series.value_counts))
 
-# Mengaplikasikan discretisasi pada setiap label kepribadian
-df['extraversion'] = discretize(label_extraversions)
-df['neuroticism'] = discretize(label_neuroticisms)
-df['agreeableness'] = discretize(label_agreeablenesses)
-df['conscientiousness'] = discretize(label_conscientiousnesses)
-df['openness'] = discretize(label_opennesses)
-
-# 3. SIMPAN KEMBALI KE FOLDER YANG SAMA (Menimpa file sebelumnya)
-df.to_csv('annotation.csv', index=False)
-print("✅ SUCCESS: Discretisasi selesai! File annotation.csv telah diperbarui dengan label kelas 0-4.")
+if __name__ == '__main__':
+    run_discretization()
