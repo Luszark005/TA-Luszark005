@@ -40,17 +40,17 @@ class FirstImpressionsVideoDataset(Dataset):
         frames = []
         
         for i in range(self.num_frames):
-            # Mengikuti format frame_00.jpg s/d frame_15.jpg
             frame_path = os.path.join(frames_dir, f"frame_{i:02d}.jpg")
             try:
                 img = Image.open(frame_path).convert('RGB')
+                # ✨ TAMBAHKAN BARIS INI: Paksa resize sebelum masuk ke list
+                img = img.resize((224, 224)) 
             except FileNotFoundError:
-                # Fallback: Gambar hitam jika frame tertentu hilang agar training tidak stop
                 img = Image.new('RGB', (224, 224), (0, 0, 0))
             frames.append(img)
 
-        # Stack menjadi Tensor Video: [T, C, H, W]
-        frames_tensor = torch.stack([v2.functional.pil_to_tensor(img) for img in frames])
+        # Sekarang torch.stack tidak akan protes karena semua ukurannya sudah (3, 224, 224)
+        frames_tensor = torch.stack([v2.functional.pil_to_tensor(img) for img in frames]
 
         # --- B. LOAD EMOTIONS (.npy) ---
         emotion_path = os.path.join(self.data_path, 'emotions', f"{video_basename}.npy")
