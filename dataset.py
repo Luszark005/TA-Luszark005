@@ -50,7 +50,7 @@ class FirstImpressionsVideoDataset(Dataset):
             frames.append(img)
 
         # Sekarang torch.stack tidak akan protes karena semua ukurannya sudah (3, 224, 224)
-        frames_tensor = torch.stack([v2.functional.pil_to_tensor(img) for img in frames]
+        frames_tensor = torch.stack([v2.functional.pil_to_tensor(img) for img in frames])
 
         # --- B. LOAD EMOTIONS (.npy) ---
         emotion_path = os.path.join(self.data_path, 'emotions', f"{video_basename}.npy")
