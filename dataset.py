@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import v2  # Wajib untuk konsistensi Multi-Frame
 
 class FirstImpressionsVideoDataset(Dataset):
-    def __init__(self, phase, data_path, transform=None, num_frames=16):
+    def __init__(self, phase, data_path, transform=None, num_frames8):
         """
         Dataset Multi-Frame yang disesuaikan untuk Swin Transformer & Ada-DF.
         Target: Klasifikasi 4 Kelas (0-3) untuk 5 Trait Big Five.
