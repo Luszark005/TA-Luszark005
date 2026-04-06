@@ -4,66 +4,57 @@ import numpy as np
 from deepface import DeepFace
 from tqdm import tqdm
 
-# --- KONFIGURASI MULTI-FRAME ---
-DATASET_CSV = './dataset/annotation.csv'
-IMAGES_DIR = './dataset/images'       # Folder tempat hasil extract_cropped_frames disimpan
-EMOTIONS_OUT_DIR = './dataset/emotions' # Folder baru khusus untuk menyimpan file .npy emosi
+# --- KONFIGURASI ---
+DATASET_CSV = '/content/dataset/annotation.csv'
+IMAGES_DIR = '/content/dataset/images'
+EMOTIONS_OUT_DIR = '/content/dataset/emotions'
+NUM_FRAMES = 8  # ✨ Sekarang kita kunci di 8 frame
 
 os.makedirs(EMOTIONS_OUT_DIR, exist_ok=True)
 
 def extract_emotion_from_frame(image_path):
     try:
-        # enforce_detection=False sangat penting agar tidak crash jika wajah agak miring/blur
-        result = DeepFace.analyze(img_path=image_path, align=False, enforce_detection=False, actions=['emotion'])
+        result = DeepFace.analyze(img_path=image_path, align=False, enforce_detection=False, actions=['emotion'], silent=True)
         emotion_probs = result[0]['emotion']
-
-        # Normalisasi ke 0.0 - 1.0 sesuai kode asli Aryan
         emotion_vector = np.array([
-            emotion_probs['angry'],
-            emotion_probs['disgust'],
-            emotion_probs['fear'],
-            emotion_probs['happy'],
-            emotion_probs['sad'],
-            emotion_probs['surprise'],
+            emotion_probs['angry'], emotion_probs['disgust'], emotion_probs['fear'],
+            emotion_probs['happy'], emotion_probs['sad'], emotion_probs['surprise'],
             emotion_probs['neutral']
         ]) / 100.0
         return emotion_vector.astype(np.float32)
-        
-    except Exception as e:
-        # FALLBACK: Jika DeepFace gagal memproses gambar karena alasan apapun,
-        # kita kembalikan array Netral murni untuk menjaga bentuk tensor tidak rusak.
-        # (Marah:0, Jijik:0, Takut:0, Senang:0, Sedih:0, Kaget:0, Netral:1)
+    except:
         return np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
 
 if __name__ == "__main__":
     df = pd.read_csv(DATASET_CSV)
     video_names = df['video_name'].tolist()
 
-    # Pakai tqdm biar kamu bisa lihat progress bar-nya
-    for video_name in tqdm(video_names, desc="Mengekstrak Emosi Multi-Frame"):
+    for video_name in tqdm(video_names, desc="Mengekstrak 8 Emosi"):
         video_basename = os.path.splitext(video_name)[0]
         video_folder = os.path.join(IMAGES_DIR, video_basename)
         
-        # Pastikan foldernya ada (hasil ekstraksi sebelumnya)
         if not os.path.exists(video_folder):
-            print(f"Folder {video_folder} tidak ditemukan. Dilewati.")
             continue
             
-        # Ambil semua gambar frame (frame_00.jpg, frame_01.jpg, dst)
-        frame_files = sorted(os.listdir(video_folder))
+        all_frames = sorted([f for f in os.listdir(video_folder) if f.endswith('.jpg')])
+        
+        # ✨ LOGIKA STRIDE: Mengambil 8 frame dari total 16 yang ada
+        # Jika ada 16 frame, stride = 2 (ambil index 0, 2, 4, 6, 8, 10, 12, 14)
+        total_available = len(all_frames)
+        stride = max(1, total_available // NUM_FRAMES)
         
         emotion_sequence = []
-        for frame_file in frame_files:
-            frame_path = os.path.join(video_folder, frame_file)
-            emotion_vector = extract_emotion_from_frame(frame_path)
-            emotion_sequence.append(emotion_vector)
+        for i in range(NUM_FRAMES):
+            idx = i * stride
+            # Pastikan tidak out of bounds
+            if idx < total_available:
+                frame_path = os.path.join(video_folder, all_frames[idx])
+                emotion_vector = extract_emotion_from_frame(frame_path)
+                emotion_sequence.append(emotion_vector)
+            else:
+                # Padding jika frame kurang dari 8
+                emotion_sequence.append(np.array([0,0,0,0,0,0,1.0], dtype=np.float32))
             
-        # Ubah list menjadi matriks Numpy 2D. 
-        # Jika ada 8 frame, ukurannya jadi (8, 7)
-        emotion_sequence_np = np.array(emotion_sequence)
-        
-        # Simpan matriks ke dalam file .npy
+        emotion_sequence_np = np.array(emotion_sequence) # Ukuran (8, 7)
         out_filepath = os.path.join(EMOTIONS_OUT_DIR, f"{video_basename}.npy")
         np.save(out_filepath, emotion_sequence_np)
-        
-    print(f"Selesai! File matriks emosi berhasil disimpan di {EMOTIONS_OUT_DIR}")
