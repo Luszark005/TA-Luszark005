@@ -4,7 +4,10 @@ import torch
 import torch.nn as nn
 
 def create_model(num_classes=4, drop_rate=0.2, emotion=True):
-    # Karena TA kamu menggunakan emosi, kita langsung arahkan ke model dengan fitur emosi
+    """
+    Factory function untuk membuat model.
+    Default num_classes=4 (Sangat Rendah, Rendah, Tinggi, Sangat Tinggi).
+    """
     return SwinMultiFrameEmotion(num_classes=num_classes, drop_rate=drop_rate)
 
 class SwinMultiFrameEmotion(nn.Module):
@@ -12,21 +15,22 @@ class SwinMultiFrameEmotion(nn.Module):
         super(SwinMultiFrameEmotion, self).__init__()
         self.drop_rate = drop_rate
 
-        # 1. BACKBONE: SWIN TRANSFORMER
-        # Menggunakan versi 'tiny' agar muat di GPU, num_classes=0 agar hanya mengambil fitur (bukan prediksi)
+        # 1. BACKBONE: SWIN TRANSFORMER (Visual Feature Extractor)
+        # Menggunakan swin_tiny_patch4_window7_224. 
+        # num_classes=0 agar bertindak sebagai feature extractor (output 768-dim)
         self.backbone = timm.create_model('swin_tiny_patch4_window7_224', pretrained=True, num_classes=0)
-        swin_out_dim = self.backbone.num_features  # Biasanya 768 untuk Swin-Tiny
+        swin_out_dim = self.backbone.num_features  # 768 untuk Swin-Tiny
 
-        # 2. PEMROSESAN EMOSI (Temporal Aggregation sudah dilakukan di forward)
+        # 2. EMOTION BRANCH (Integrasi Fitur Emosi)
+        # Input: 7-dimensi vektor emosi dari DeepFace
         self.emotion_feature = nn.Sequential(
             nn.Linear(7, 128), 
             nn.ReLU(), 
             nn.BatchNorm1d(128)
         )
         
-        # 3. DUAL-BRANCH FEATURE EXTRACTOR
-        # Karena kita tidak bisa memotong layer Transformer seperti ResNet, 
-        # kita buat cabang (branch) baru menggunakan Multilayer Perceptron (MLP)
+        # 3. DUAL-BRANCH MLP (Untuk Ada-DF)
+        # Membuat dua jalur fitur mandiri sebelum klasifikasi
         branch_dim = 512
         self.branch_1_feature = nn.Sequential(
             nn.Linear(swin_out_dim, branch_dim),
@@ -35,67 +39,69 @@ class SwinMultiFrameEmotion(nn.Module):
         )
         self.branch_2_feature = copy.deepcopy(self.branch_1_feature)
 
-        # 4. CLASSIFIERS & ATTENTION (Untuk 5 Sifat Big Five)
-        fused_dim = branch_dim + 128 # 512 + 128 = 640
+        # 4. MULTI-OUTPUT CLASSIFIERS (Big Five OCEAN)
+        # Gabungan visual (512) + emosi (128) = 640 dimensi
+        fused_dim = branch_dim + 128 
 
+        # Cabang 1 (Auxiliary/Tambahan) & Cabang 2 (Target/Prediksi Akhir)
         self.branch_1_classifiers = nn.ModuleList(nn.Linear(fused_dim, num_classes) for _ in range(5))
         self.branch_2_classifiers = nn.ModuleList(nn.Linear(fused_dim, num_classes) for _ in range(5))
         
+        # Modul Perhatian (Attention Weight) untuk Adaptive Fusion
         self.alphas_1 = nn.ModuleList(nn.Sequential(nn.Linear(fused_dim, 1), nn.Sigmoid()) for _ in range(5))
         self.alphas_2 = nn.ModuleList(nn.Sequential(nn.Linear(fused_dim, 1), nn.Sigmoid()) for _ in range(5))
 
     def forward(self, frames, emotions):
         """
-        frames: Tensor berdimensi [Batch, Frames, Channels, Height, Width]
-        emotions: Tensor berdimensi [Batch, Frames, 7]
+        Input:
+          frames: [Batch, 16, 3, 224, 224]
+          emotions: [Batch, 16, 7]
         """
         B, F, C, H, W = frames.shape
 
-        # --- A. TEMPORAL RE-SHAPING UNTUK SWIN ---
-        # Swin Transformer standar (2D) tidak mengerti dimensi 'Frames'.
-        # Kita lebur Batch dan Frames: [Batch * Frames, C, H, W]
+        # --- A. TEMPORAL PROCESSING ---
+        # 1. Flatten Batch & Frames agar bisa masuk ke Swin 2D
         frames_reshaped = frames.view(B * F, C, H, W)
         
-        # Masukkan ke Swin Transformer
-        features = self.backbone(frames_reshaped) # Output: [Batch * Frames, 768]
-        
-        # Kembalikan dimensinya ke bentuk video: [Batch, Frames, 768]
-        features = features.view(B, F, -1)
+        # 2. Extract Fitur Visual
+        visual_features = self.backbone(frames_reshaped) # [B*F, 768]
+        visual_features = visual_features.view(B, F, -1) # Kembali ke [B, 16, 768]
 
-        # --- B. TEMPORAL AGGREGATION (PENGGABUNGAN WAKTU) ---
-        # Kita ambil rata-rata fitur dari seluruh frame dalam satu video (Mean Pooling)
-        # Output menjadi: [Batch, 768]
-        video_features = torch.mean(features, dim=1)
+        # 3. Temporal Aggregation (Mean Pooling)
+        # Menggabungkan informasi dari 16 frame menjadi satu representasi video
+        video_visual = torch.mean(visual_features, dim=1) # [B, 768]
+        video_emotions = torch.mean(emotions, dim=1)      # [B, 7]
 
-        # Lakukan hal yang sama untuk fitur emosi: [Batch, Frames, 7] -> [Batch, 7]
-        video_emotions = torch.mean(emotions, dim=1)
-        
-        # Masukkan emosi yang sudah dirata-rata ke layer MLP Emosi
-        emotion_features = self.emotion_feature(video_emotions) # Output: [Batch, 128]
+        # --- B. FEATURE ENHANCEMENT ---
+        # Jalankan cabang emosi
+        emotion_features = self.emotion_feature(video_emotions) # [B, 128]
 
-        # --- C. DUAL-BRANCH FEATURE EXTRACTION ---
-        feature_1 = self.branch_1_feature(video_features) # Output: [Batch, 512]
-        feature_2 = self.branch_2_feature(video_features) # Output: [Batch, 512]
+        # Jalankan cabang Dual-Branch
+        feat_1 = self.branch_1_feature(video_visual) # [B, 512]
+        feat_2 = self.branch_2_feature(video_visual) # [B, 512]
 
-        # --- D. FUSI (PENGGABUNGAN) VISUAL + EMOSI ---
-        feature_fused_1 = torch.cat([feature_1, emotion_features], dim=1) # Output: [Batch, 640]
-        feature_fused_2 = torch.cat([feature_2, emotion_features], dim=1) # Output: [Batch, 640]
+        # --- C. ADAPTIVE DISTRIBUTION FUSION ---
+        # Gabungkan visual dan emosi
+        fused_1 = torch.cat([feat_1, emotion_features], dim=1) # [B, 640]
+        fused_2 = torch.cat([feat_2, emotion_features], dim=1) # [B, 640]
 
-        outputs_1 = []
-        outputs_2 = []
-        attention_weights = []
+        out_aux = []    # Hasil dari Cabang Tambahan
+        out_target = [] # Hasil dari Cabang Target (Prediksi Utama)
+        att_weights = []
 
-        # --- E. KLASIFIKASI & ADAPTIVE FUSION ---
         for i in range(5):
-            attention_weights_1 = self.alphas_1[i](feature_fused_1)
-            attention_weights_2 = self.alphas_2[i](feature_fused_2)
+            # Hitung Bobot Atensi (w_aux dan w_tar)
+            w1 = self.alphas_1[i](fused_1)
+            w2 = self.alphas_2[i](fused_2)
 
-            out_1 = attention_weights_1 * self.branch_1_classifiers[i](feature_fused_1)
-            out_2 = attention_weights_2 * self.branch_2_classifiers[i](feature_fused_2)
+            # Klasifikasi dengan pembobotan adaptif
+            res_1 = w1 * self.branch_1_classifiers[i](fused_1)
+            res_2 = w2 * self.branch_2_classifiers[i](fused_2)
 
-            outputs_1.append(out_1)
-            outputs_2.append(out_2)
-
-            attention_weights.append((attention_weights_1 + attention_weights_2) / 2)
+            out_aux.append(res_1)
+            out_target.append(res_2)
+            
+            # Rata-rata bobat atensi (w_avg) untuk perhitungan loss
+            att_weights.append((w1 + w2) / 2)
         
-        return outputs_1, outputs_2, attention_weights
+        return out_aux, out_target, att_weights
