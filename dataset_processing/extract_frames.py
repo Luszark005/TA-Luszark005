@@ -6,7 +6,7 @@ from multiprocessing import Pool
 # ==============================
 # CONFIG
 # ==============================
-video_root = '/content/dataset_raw/'
+video_root = '/content/drive/MyDrive/Dataset_TA/'
 phases = ['training', 'validation', 'test']
 
 output_folder = '/content/frames/'
