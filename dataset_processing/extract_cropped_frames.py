@@ -1,58 +1,75 @@
-import pandas as pd
-import cv2
 import os
-from multiprocessing import Pool
+import cv2
+import pandas as pd
+import torch
+from facenet_pytorch import MTCNN
 from tqdm import tqdm
 
-# --- KONFIGURASI PATH ---
-# Sesuaikan dengan struktur Drive kamu
-base_video_path = '/content/drive/MyDrive/Dataset_TA/'
-output_folder = '/content/frames/'
-os.makedirs(output_folder, exist_ok=True)
+# ==============================
+# DEVICE
+# ==============================
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"🔥 Using device: {device}")
 
-# 1. BACA FILE CSV
-df = pd.read_csv('annotation.csv')
+# ==============================
+# INIT MTCNN
+# ==============================
+mtcnn = MTCNN(
+    keep_all=False,
+    device=device,
+    post_process=True,
+    image_size=224,
+    margin=20
+)
 
-def process_video(row):
-    video_file = row['video_name']
-    phase = row['phase'] # 'train', 'validation', atau 'test'
-    
-    if not str(video_file).endswith('.mp4'):
-        video_file = str(video_file) + '.mp4'
-            
-    # Mencari video di subfolder yang sesuai (train/test/validation)
-    video_path = os.path.join(base_video_path, phase, video_file)
-    
-    if not os.path.exists(video_path):
-        return
-            
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return
-            
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    if fps == 0: fps = 25
-    
-    frame_count = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        # Ambil 1 frame setiap 1 detik
-        if frame_count % fps == 0:
-            frame_filename = os.path.join(output_folder, f"{os.path.splitext(video_file)[0]}_frame{frame_count}.jpg")
-            cv2.imwrite(frame_filename, frame)
-        
-        frame_count += 1
-    cap.release()
+# ==============================
+# PATH
+# ==============================
+FRAMES_DIR = '/content/frames/'
+OUTPUT_DIR = '/content/dataset_images/'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-if __name__ == '__main__':
-    video_rows = df.to_dict('records')
-    print(f"🚀 Memulai ekstraksi {len(video_rows)} video...")
-    
-    with Pool(os.cpu_count()) as pool:
-        # Menggunakan tqdm untuk memantau progres
-        list(tqdm(pool.imap(process_video, video_rows), total=len(video_rows)))
-        
-    print(f"✅ SUCCESS: Frame disimpan di {output_folder}")
+# ==============================
+# LOAD ANNOTATION
+# ==============================
+df = pd.read_csv('/content/annotation.csv')
+videos = df['video_name'].tolist()
+
+# 🔥 TEST DULU
+videos = videos[:50]
+
+# ==============================
+# MAIN LOOP
+# ==============================
+for video_name in tqdm(videos):
+    base_name = os.path.splitext(video_name)[0]
+
+    video_out_dir = os.path.join(OUTPUT_DIR, base_name)
+    os.makedirs(video_out_dir, exist_ok=True)
+
+    # ambil semua frame video ini
+    video_frames = [
+        f for f in os.listdir(FRAMES_DIR)
+        if f.startswith(base_name)
+    ]
+
+    if len(video_frames) == 0:
+        continue
+
+    for frame_file in video_frames:
+        img_path = os.path.join(FRAMES_DIR, frame_file)
+        img = cv2.imread(img_path)
+
+        if img is None:
+            continue
+
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        save_path = os.path.join(video_out_dir, frame_file)
+
+        try:
+            mtcnn(img_rgb, save_path=save_path)
+        except:
+            continue
+
+print("✅ DONE: Cropped faces saved.")
