@@ -7,7 +7,7 @@ from multiprocessing import Pool
 # CONFIG
 # ==============================
 video_root = '/content/dataset_raw/'
-phases = ['train', 'validation', 'test']
+phases = ['training', 'validation', 'test']
 
 output_folder = '/content/frames/'
 os.makedirs(output_folder, exist_ok=True)
