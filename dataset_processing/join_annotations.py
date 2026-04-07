@@ -20,4 +20,4 @@ def join_annotations(base_path):
 
 if __name__ == '__main__':
     # Arahkan ke folder Dataset_TA di Google Drive kamu
-    join_annotations('/content/drive/MyDrive/Dataset_TA')
+    join_annotations('D:\\0. Kuliah\\1. Tugas Akhir\\ta-luszark005\\dataset_processing')
