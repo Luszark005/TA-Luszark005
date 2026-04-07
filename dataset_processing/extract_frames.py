@@ -16,8 +16,10 @@ os.makedirs(output_folder, exist_ok=True)
 # LOAD ANNOTATION
 # ==============================
 df = pd.read_csv('annotation.csv')
-videos = videos[:50]  # 🔥 testing dulu biar cepat
-#videos = df['video_name'].tolist()
+videos = df['video_name'].tolist()
+
+# 🔥 BATASI DATA (SETELAH videos dibuat)
+videos = videos[:50]  # Hanya proses 50 video pertama untuk testing cepat
 
 # Mencegah error jika jumlah video lebih sedikit dari jumlah CPU
 cpu_count = os.cpu_count() or 1
