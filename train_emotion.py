@@ -20,7 +20,7 @@ parser.add_argument('--batch_size', default=4, type=int)
 parser.add_argument('--accumulation_steps', default=4, type=int) # Efektif batch size = 16
 parser.add_argument('--lr', default=0.00005, type=float) # LR lebih kecil untuk Swin
 parser.add_argument('--num_classes', default=4, type=int)
-parser.add_argument('--num_frames', default=16, type=int)
+parser.add_argument('--num_frames', default=8, type=int)
 
 # Ada-DF method configs
 parser.add_argument('--threshold', default=0.7, type=float)
@@ -125,6 +125,14 @@ def train(train_loader, model, criterion_ce, criterion_kld, optimizer, LD, epoch
         labels = labels.to(device).permute(1, 0) # [5, B]
 
         out_aux, out_target, attention_weights = model(images, emotions)
+
+        # DEBUG DI SINI
+        if epoch == 1 and i == 0:
+            print("Jumlah output (aux):", len(out_aux))
+            print("Jumlah output (target):", len(out_target))
+
+    for j in range(len(out_target)):
+        print(f"Trait {j} shape:", out_target[j].shape)
         
         loss_batch = 0
         for j in range(5): # Loop OCEAN traits
