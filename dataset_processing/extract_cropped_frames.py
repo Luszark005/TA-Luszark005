@@ -5,15 +5,11 @@ import torch
 from facenet_pytorch import MTCNN
 from tqdm import tqdm
 
-# ==============================
-# DEVICE
-# ==============================
+# Config
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"🔥 Using device: {device}")
 
-# ==============================
 # INIT MTCNN
-# ==============================
 mtcnn = MTCNN(
     keep_all=False,
     device=device,
@@ -22,25 +18,19 @@ mtcnn = MTCNN(
     margin=20
 )
 
-# ==============================
-# PATH
-# ==============================
+# Setting up multiprocessing dan path
 FRAMES_DIR = '/content/frames/'
 OUTPUT_DIR = '/content/dataset_images/'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ==============================
-# LOAD ANNOTATION
-# ==============================
+# Load Annotation CSV dan daftar video yang sudah dideskritisasi
 df = pd.read_csv('/content/annotation.csv')
 videos = df['video_name'].tolist()
 
-# 🔥 TEST DULU
+# Untuk Keperluan testing cepat, batasi jumlah video yang diproses
 videos = videos[:50]
 
-# ==============================
-# MAIN LOOP
-# ==============================
+# Main Loop untuk memproses setiap video
 for video_name in tqdm(videos):
     base_name = os.path.splitext(video_name)[0]
 
@@ -72,4 +62,4 @@ for video_name in tqdm(videos):
         except:
             continue
 
-print("✅ DONE: Cropped faces saved.")
+print("DONE: Cropped faces saved.") # Debugging statement

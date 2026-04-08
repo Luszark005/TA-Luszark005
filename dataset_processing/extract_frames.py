@@ -3,22 +3,18 @@ import cv2
 import os
 from multiprocessing import Pool
 
-# ==============================
-# CONFIG
-# ==============================
+# Setup Config
 video_root = '/content/drive/MyDrive/Dataset_TA/'
 phases = ['training', 'validation', 'test']
 
 output_folder = '/content/frames/'
 os.makedirs(output_folder, exist_ok=True)
 
-# ==============================
-# LOAD ANNOTATION
-# ==============================
+# Mendapatkan daftar video yang akan diproses
 df = pd.read_csv('annotation.csv')
 videos = df['video_name'].tolist()
 
-# 🔥 BATASI DATA (SETELAH videos dibuat)
+# Keperluan Testing Pipeline, jangan lupa dihapus
 videos = videos[:50]  # Hanya proses 50 video pertama untuk testing cepat
 
 # Mencegah error jika jumlah video lebih sedikit dari jumlah CPU
@@ -27,13 +23,11 @@ chunk_size = max(1, len(videos) // cpu_count)
 video_chunks = [videos[i:i + chunk_size] for i in range(0, len(videos), chunk_size)]
 
 
-# ==============================
-# MAIN PROCESS FUNCTION
-# ==============================
+# Main function untuk memproses chunk video
 def process_video_chunk(video_chunk):
     for video_file in video_chunk:
         try:
-            # Pastikan ekstensi .mp4
+            # Memastikan nama video PUNYA ekstensi .mp4
             if not str(video_file).endswith('.mp4'):
                 video_file = str(video_file) + '.mp4'
 
@@ -80,12 +74,10 @@ def process_video_chunk(video_chunk):
             cap.release()
 
         except Exception as e:
-            print(f"❌ Error pada video {video_file}: {e}")
+            print(f"Error pada video {video_file}: {e}") # debugging statement
 
 
-# ==============================
-# RUN MULTIPROCESSING
-# ==============================
+# Run multiprocessing untuk ekstraksi frame
 if __name__ == '__main__':
     print(f"🚀 Memulai ekstraksi {len(videos)} video menggunakan {cpu_count} CPU core...")
     print("⏳ Proses ini bisa memakan waktu cukup lama...")
@@ -93,4 +85,4 @@ if __name__ == '__main__':
     with Pool(processes=cpu_count) as pool:
         pool.map(process_video_chunk, video_chunks)
 
-    print("✅ SUCCESS: Semua frame berhasil diekstrak ke folder /content/frames/")
+    print("SUCCESS: Semua frame berhasil diekstrak ke folder /content/frames/") # debugging statement

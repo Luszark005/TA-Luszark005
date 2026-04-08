@@ -17,6 +17,9 @@ Papers:
 
 Hacked together by / Copyright 2019, Ross Wightman
 """
+
+# JANGAN LUPA KITA GK MAKE INI YAK
+
 import random
 import math
 import re
@@ -29,7 +32,7 @@ _PIL_VER = tuple([int(x) for x in PIL.__version__.split('.')[:2]])
 
 _FILL = (128, 128, 128)
 
-_LEVEL_DENOM = 10.  # denominator for conversion from 'Mx' magnitude scale to fractional aug level for op arguments
+_LEVEL_DENOM = 10.  # denominator untuk mengubah level ke dalam range yang diinginkan untuk setiap operasi augmentasi
 
 _HPARAMS_DEFAULT = dict(
     translate_const=250,

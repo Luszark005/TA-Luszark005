@@ -13,7 +13,8 @@ class FirstImpressionsVideoDataset(Dataset):
         self.transform = transform
         self.num_frames = num_frames
 
-        # Memastikan file anotasi tersedia di folder dataset
+        # Mastiin file anotasi tersedia di folder dataset
+        # Sesuaikan aja kalau pakai Google Drive atau path lokal
         csv_path = os.path.join(data_path, 'annotation.csv')
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"Annotation file not found at {csv_path}")
@@ -34,7 +35,7 @@ class FirstImpressionsVideoDataset(Dataset):
         frames_dir = os.path.join(self.data_path, 'images', video_basename)
         frames = []
         
-        # --- A. LOAD FRAMES (LINEAR INDEX) ---
+        # Loaad Frames (linear index)
         # PERBAIKAN: Tidak perlu lagi menggunakan stride karena file sudah 
         # dinamai berurutan frame_00.jpg s/d frame_07.jpg oleh extract_emotions.py
         for i in range(self.num_frames):
@@ -52,7 +53,7 @@ class FirstImpressionsVideoDataset(Dataset):
         # Mengubah list gambar menjadi tensor video [Batch x 3 x 224 x 224]
         frames_tensor = torch.stack([v2.functional.pil_to_tensor(img) for img in frames])
 
-        # --- B. LOAD EMOTIONS (.npy) ---
+        # LOAD EMOTIONS (.npy) 
         # File .npy sekarang berisi urutan 8 emosi yang sudah sinkron dengan gambarnya
         emotion_path = os.path.join(self.data_path, 'emotions', f"{video_basename}.npy")
         try:
@@ -72,7 +73,7 @@ class FirstImpressionsVideoDataset(Dataset):
         emotions_tensor = torch.tensor(emotions, dtype=torch.float32)
         labels_tensor = torch.tensor(self.labels[idx], dtype=torch.long)
 
-        # --- C. AUGMENTASI ---
+        # AUGMENTASI
         # Menggunakan transformasi torchvision v2 untuk efisiensi
         if self.transform is not None:
             frames_tensor = self.transform(frames_tensor)
