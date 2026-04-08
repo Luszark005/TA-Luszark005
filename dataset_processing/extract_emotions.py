@@ -8,7 +8,7 @@ from tqdm import tqdm
 # ================= CONFIG =================
 DATASET_CSV = '/content/annotation.csv'
 IMAGES_DIR = '/content/dataset/images/'   # hasil dari extract_cropped_frames
-FINAL_IMAGES_DIR = '/content/dataset/images'
+FINAL_IMAGES_DIR = '/content/dataset/images_emotions' # folder baru untuk menyimpan frame yang sudah dipasangi emosi
 EMOTIONS_OUT_DIR = '/content/dataset/emotions'
 
 NUM_FRAMES = 5
