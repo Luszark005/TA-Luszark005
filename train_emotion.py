@@ -109,9 +109,8 @@ def main():
 
 def train(train_loader, model, criterion_ce, criterion_kld, optimizer, LD, epoch, accumulation_steps):
     model.train()
-    meters = {k: AverageMeter() for k in ['loss', 'ce', 'kld', 'rr']}
-    
-    # Dinamis Alpha untuk Ada-DF
+    meters = {k: AverageMeter() for k in ['loss']}
+
     if epoch <= args.beta:
         alpha_1, alpha_2 = math.exp(-(1 - epoch / args.beta)**2), 1
     else:
@@ -122,38 +121,52 @@ def train(train_loader, model, criterion_ce, criterion_kld, optimizer, LD, epoch
 
     for i, (images, labels, emotions, _) in pbar:
         images, emotions = images.to(device), emotions.to(device)
-        labels = labels.to(device).permute(1, 0) # [5, B]
+        labels = labels.to(device).permute(1, 0)  # [5, B]
 
         out_aux, out_target, attention_weights = model(images, emotions)
 
-        # DEBUG DI SINI
+        # 🔥 DEBUG (sekali saja)
         if epoch == 1 and i == 0:
             print("Jumlah output (aux):", len(out_aux))
             print("Jumlah output (target):", len(out_target))
+            for j in range(len(out_target)):
+                print(f"Trait {j} shape:", out_target[j].shape)
 
-    for j in range(len(out_target)):
-        print(f"Trait {j} shape:", out_target[j].shape)
-        
         loss_batch = 0
-        for j in range(5): # Loop OCEAN traits
-            # Rank Regularization Loss
+
+        for j in range(5):  # OCEAN
+            # Rank Regularization
             tops = int(args.batch_size * args.tops)
             _, top_idx = torch.topk(attention_weights[j].squeeze(), tops)
             _, down_idx = torch.topk(attention_weights[j].squeeze(), args.batch_size - tops, largest=False)
-            rr_loss = torch.clamp(torch.mean(attention_weights[j][down_idx]) - torch.mean(attention_weights[j][top_idx]) + args.margin_1, min=0)
 
-            # Cross Entropy untuk Auxiliary Branch
+            rr_loss = torch.clamp(
+                torch.mean(attention_weights[j][down_idx]) -
+                torch.mean(attention_weights[j][top_idx]) +
+                args.margin_1,
+                min=0
+            )
+
+            # Cross Entropy
             l_ce = criterion_ce(out_aux[j], labels[j]).mean()
 
-            # KL Divergence untuk Target Branch
-            # Adaptive Label Fusion: d_fused = w * d_class + (1-w) * d_aux
-            soft_aux = F.softmax(out_aux[j], dim=1)
-            targets_fused = (1 - attention_weights[j]) * soft_aux + attention_weights[j] * LD[j][labels[j]]
-            l_kld = criterion_kld(F.log_softmax(out_target[j], dim=1), targets_fused).sum() / args.batch_size
+            # 🔥 FIX UTAMA: DETACH
+            soft_aux = F.softmax(out_aux[j].detach(), dim=1)
+
+            targets_fused = (
+                (1 - attention_weights[j].detach()) * soft_aux +
+                attention_weights[j].detach() * LD[j][labels[j]]
+            )
+
+            l_kld = criterion_kld(
+                F.log_softmax(out_target[j], dim=1),
+                targets_fused
+            ).sum() / args.batch_size
 
             loss_batch += (alpha_2 * l_ce + alpha_1 * l_kld + rr_loss)
 
         loss_batch /= 5.0
+
         (loss_batch / accumulation_steps).backward()
 
         if (i + 1) % accumulation_steps == 0:
