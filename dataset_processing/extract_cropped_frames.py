@@ -1,65 +1,170 @@
 import os
 import cv2
+import random
+import numpy as np
 import pandas as pd
 import torch
 from facenet_pytorch import MTCNN
 from tqdm import tqdm
 
-# Config
+# ================= CONFIG =================
+FRAMES_DIR = '/content/frames/'
+OUTPUT_DIR = '/content/dataset/images/'
+ANNOTATION_CSV = '/content/annotation.csv'
+
+NUM_SEGMENTS = 5
+SAMPLES_PER_SEGMENT = 5
+
+random.seed(42)
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# ================ INIT ====================
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"🔥 Using device: {device}")
 
-# INIT MTCNN
 mtcnn = MTCNN(
-    keep_all=False,
-    device=device,
-    post_process=True,
-    image_size=224,
-    margin=20
+    keep_all=True,
+    device=device
 )
 
-# Setting up multiprocessing dan path
-FRAMES_DIR = '/content/frames/'
-OUTPUT_DIR = '/content/dataset_images/'
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+df = pd.read_csv(ANNOTATION_CSV)
+video_names = df['video_name'].tolist()
 
-# Load Annotation CSV dan daftar video yang sudah dideskritisasi
-df = pd.read_csv('/content/annotation.csv')
-videos = df['video_name'].tolist()
+# (optional) testing cepat
+video_names = video_names[:50]
 
-# Untuk Keperluan testing cepat, batasi jumlah video yang diproses
-videos = videos[:50]
+# ================ FUNCTIONS =================
 
-# Main Loop untuk memproses setiap video
-for video_name in tqdm(videos):
-    base_name = os.path.splitext(video_name)[0]
+def load_image(path):
+    img = cv2.imread(path)
+    if img is None:
+        return None
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    video_out_dir = os.path.join(OUTPUT_DIR, base_name)
+def compute_sharpness(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    return cv2.Laplacian(gray, cv2.CV_64F).var()
+
+def compute_landmark_alignment(landmarks):
+    if landmarks is None:
+        return float('-inf')
+
+    left_eye, right_eye, nose, left_mouth, right_mouth = landmarks[0]
+
+    eye_distance = np.linalg.norm(left_eye - right_eye)
+    mouth_width = np.linalg.norm(left_mouth - right_mouth)
+
+    nose_center = (left_eye[1] + right_eye[1]) / 2
+    nose_offset = abs(nose[1] - nose_center)
+
+    symmetry_score = eye_distance / (mouth_width + 1e-6)
+
+    return -nose_offset + symmetry_score
+
+def detect_face(image):
+    boxes, probs, landmarks = mtcnn.detect(image, landmarks=True)
+    return boxes, probs, landmarks
+
+# ================ MAIN =================
+
+for video_name in tqdm(video_names):
+
+    base = os.path.splitext(video_name)[0]
+    video_out_dir = os.path.join(OUTPUT_DIR, base)
     os.makedirs(video_out_dir, exist_ok=True)
 
-    # ambil semua frame video ini
-    video_frames = [
+    # ambil semua frame milik video ini
+    frames = [
         f for f in os.listdir(FRAMES_DIR)
-        if f.startswith(base_name)
+        if f.startswith(base)
     ]
 
-    if len(video_frames) == 0:
+    if len(frames) == 0:
         continue
 
-    for frame_file in video_frames:
-        img_path = os.path.join(FRAMES_DIR, frame_file)
-        img = cv2.imread(img_path)
+    frames = sorted(frames)
 
+    # split jadi 5 segment
+    segments = np.array_split(frames, NUM_SEGMENTS)
+
+    selected_frames = []
+
+    for segment in segments:
+
+        segment = list(segment)
+        if len(segment) == 0:
+            continue
+
+        # random sample max 5
+        sampled = random.sample(segment, min(SAMPLES_PER_SEGMENT, len(segment)))
+
+        best_score = float('-inf')
+        best_frame = None
+        best_crop = None
+
+        fallback_frames = []
+
+        for frame_name in sampled:
+            frame_path = os.path.join(FRAMES_DIR, frame_name)
+            image = load_image(frame_path)
+
+            if image is None:
+                continue
+
+            boxes, probs, landmarks = detect_face(image)
+
+            if boxes is not None and landmarks is not None:
+                sharpness = compute_sharpness(image)
+                alignment = compute_landmark_alignment(landmarks)
+                score = 0.8 * sharpness + 0.2 * alignment
+
+                x1, y1, x2, y2 = boxes[0]
+                h, w, _ = image.shape
+                x1, y1 = int(max(0, x1)), int(max(0, y1))
+                x2, y2 = int(min(w, x2)), int(min(h, y2))
+
+                crop = image[y1:y2, x1:x2]
+
+                if score > best_score:
+                    best_score = score
+                    best_frame = frame_name
+                    best_crop = crop
+
+            else:
+                fallback_frames.append(frame_name)
+
+        # ================= FALLBACK =================
+        if best_crop is None:
+            # ambil random frame dari segment
+            fallback_choice = random.choice(segment)
+            frame_path = os.path.join(FRAMES_DIR, fallback_choice)
+            image = load_image(frame_path)
+
+            if image is None:
+                continue
+
+            boxes, _, _ = detect_face(image)
+
+            if boxes is not None:
+                x1, y1, x2, y2 = boxes[0]
+                h, w, _ = image.shape
+                x1, y1 = int(max(0, x1)), int(max(0, y1))
+                x2, y2 = int(min(w, x2)), int(min(h, y2))
+                best_crop = image[y1:y2, x1:x2]
+            else:
+                # kalau tetap gagal → pakai full image
+                best_crop = image
+
+        selected_frames.append(best_crop)
+
+    # ================= SAVE =================
+    for i, img in enumerate(selected_frames):
         if img is None:
             continue
 
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        save_path = os.path.join(video_out_dir, f"frame_{i:02d}.jpg")
+        cv2.imwrite(save_path, img_bgr)
 
-        save_path = os.path.join(video_out_dir, frame_file)
-
-        try:
-            mtcnn(img_rgb, save_path=save_path)
-        except:
-            continue
-
-print("DONE: Cropped faces saved.") # Debugging statement
+print("✅ DONE: 5 best frames per video saved.")

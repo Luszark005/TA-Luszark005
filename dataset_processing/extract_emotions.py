@@ -5,19 +5,18 @@ import shutil
 from deepface import DeepFace
 from tqdm import tqdm
 
-# Konfigurasi Path
+# ================= CONFIG =================
 DATASET_CSV = '/content/annotation.csv'
-IMAGES_DIR = '/content/dataset_images/'
-
-EMOTIONS_OUT_DIR = '/content/dataset/emotions'
+IMAGES_DIR = '/content/dataset_images/'   # hasil dari extract_cropped_frames
 FINAL_IMAGES_DIR = '/content/dataset/images'
+EMOTIONS_OUT_DIR = '/content/dataset/emotions'
 
-NUM_FRAMES = 8
+NUM_FRAMES = 5
 
 os.makedirs(EMOTIONS_OUT_DIR, exist_ok=True)
 os.makedirs(FINAL_IMAGES_DIR, exist_ok=True)
 
-# Fungsi untuk mengekstrak emosi dari sebuah frame menggunakan DeepFace
+# ================= FUNCTION =================
 def extract_emotion_from_frame(image_path):
     try:
         result = DeepFace.analyze(
@@ -46,14 +45,13 @@ def extract_emotion_from_frame(image_path):
         # fallback → neutral
         return np.array([0,0,0,0,0,0,1.0], dtype=np.float32)
 
-# MAIN
+# ================= MAIN =================
 if __name__ == "__main__":
 
     df = pd.read_csv(DATASET_CSV)
     video_names = df['video_name'].tolist()
 
-    # Untuk keperluan testing cepat, batasi jumlah video yang diproses
-    # Jangan lupa dihapus kalau udah selesai testing
+    # testing cepat (optional)
     video_names = video_names[:50]
 
     print(f"🚀 Processing {len(video_names)} videos...")
@@ -65,49 +63,34 @@ if __name__ == "__main__":
         if not os.path.exists(video_folder):
             continue
 
-        all_frames = sorted([
-            f for f in os.listdir(video_folder)
-            if f.endswith('.jpg')
-        ])
-
-        total_available = len(all_frames)
-        if total_available == 0:
-            continue
-
-        # folder output
+        # folder output final (yang dipakai training)
         final_video_img_dir = os.path.join(FINAL_IMAGES_DIR, video_basename)
         os.makedirs(final_video_img_dir, exist_ok=True)
-
-        # Stride untuk memilih frame secara merata dari video yang sudah dideskritisasi
-        stride = max(1, total_available // NUM_FRAMES)
 
         emotion_sequence = []
 
         for i in range(NUM_FRAMES):
-            idx = i * stride
+            frame_name = f"frame_{i:02d}.jpg"
+            source_frame_path = os.path.join(video_folder, frame_name)
+            target_frame_path = os.path.join(final_video_img_dir, frame_name)
 
-            target_frame_name = f"frame_{i:02d}.jpg"
-            target_frame_path = os.path.join(final_video_img_dir, target_frame_name)
-
-            if idx < total_available:
-                source_frame_path = os.path.join(video_folder, all_frames[idx])
-
+            if os.path.exists(source_frame_path):
                 # extract emotion
                 emotion_vector = extract_emotion_from_frame(source_frame_path)
                 emotion_sequence.append(emotion_vector)
 
-                # copy frame
+                # copy ke folder final
                 shutil.copy(source_frame_path, target_frame_path)
 
             else:
-                # padding jika jumlah frame kurang dari NUM_FRAMES
+                # fallback kalau frame missing
                 emotion_sequence.append(
                     np.array([0,0,0,0,0,0,1.0], dtype=np.float32)
                 )
 
-        # save .npy
+        # save emotion sequence (5,7)
         emotion_sequence_np = np.array(emotion_sequence)
         out_filepath = os.path.join(EMOTIONS_OUT_DIR, f"{video_basename}.npy")
         np.save(out_filepath, emotion_sequence_np)
 
-    print("DONE: Emotion extraction selesai") #debugging statement
+    print("✅ DONE: Emotion extraction selesai")

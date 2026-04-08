@@ -20,7 +20,7 @@ parser.add_argument('--batch_size', default=4, type=int)
 parser.add_argument('--accumulation_steps', default=4, type=int) # Efektif batch size = 16
 parser.add_argument('--lr', default=0.00005, type=float) # LR lebih kecil untuk Swin
 parser.add_argument('--num_classes', default=4, type=int)
-parser.add_argument('--num_frames', default=8, type=int)
+parser.add_argument('--num_frames', default=5, type=int)
 
 # Ada-DF method configs
 parser.add_argument('--threshold', default=0.7, type=float)
