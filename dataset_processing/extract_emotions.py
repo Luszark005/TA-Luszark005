@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 # ================= CONFIG =================
 DATASET_CSV = '/content/annotation.csv'
-IMAGES_DIR = '/content/dataset_images/'   # hasil dari extract_cropped_frames
+IMAGES_DIR = '/content/datase/images/'   # hasil dari extract_cropped_frames
 FINAL_IMAGES_DIR = '/content/dataset/images'
 EMOTIONS_OUT_DIR = '/content/dataset/emotions'
 
