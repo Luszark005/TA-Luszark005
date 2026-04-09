@@ -7,7 +7,7 @@ import torch
 from facenet_pytorch import MTCNN
 from tqdm import tqdm
 
-# ================= CONFIG =================
+# Conmon Config 
 FRAMES_DIR = '/content/frames/'
 OUTPUT_DIR = '/content/dataset/images/'
 ANNOTATION_CSV = '/content/annotation.csv'
@@ -19,9 +19,10 @@ random.seed(42)
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ================ INIT ====================
+# Setup MTCNN dengan device yang sesuai (GPU jika tersedia, CPU jika tidak)
+# CPU cuman jaga-jaga aja walaupun gk perlu sih di konteks ini
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"🔥 Using device: {device}")
+print(f"Using device: {device}")
 
 mtcnn = MTCNN(
     keep_all=True,
@@ -31,10 +32,10 @@ mtcnn = MTCNN(
 df = pd.read_csv(ANNOTATION_CSV)
 video_names = df['video_name'].tolist()
 
-# (optional) testing cepat
+# testing cepat, jangan lupa dihapus
 video_names = video_names[:50]
 
-# ================ FUNCTIONS =================
+# Functions
 
 def load_image(path):
     img = cv2.imread(path)
@@ -66,7 +67,7 @@ def detect_face(image):
     boxes, probs, landmarks = mtcnn.detect(image, landmarks=True)
     return boxes, probs, landmarks
 
-# ================ MAIN =================
+ # MAIN 
 
 for video_name in tqdm(video_names):
 
@@ -74,7 +75,7 @@ for video_name in tqdm(video_names):
     video_out_dir = os.path.join(OUTPUT_DIR, base)
     os.makedirs(video_out_dir, exist_ok=True)
 
-    # ambil semua frame milik video ini
+    # ambil semua frame milik video berdasarkan nama file
     frames = [
         f for f in os.listdir(FRAMES_DIR)
         if f.startswith(base)
@@ -134,7 +135,7 @@ for video_name in tqdm(video_names):
             else:
                 fallback_frames.append(frame_name)
 
-        # ================= FALLBACK =================
+        # Fallback jika semua sampled frames gagal deteksi wajah → coba random frame dari segment sampai dapat crop wajah terbaik
         if best_crop is None:
             # ambil random frame dari segment
             fallback_choice = random.choice(segment)
@@ -158,7 +159,7 @@ for video_name in tqdm(video_names):
 
         selected_frames.append(best_crop)
 
-    # ================= SAVE =================
+    # Simpan 5 frame terbaik 
     for i, img in enumerate(selected_frames):
         if img is None:
             continue
@@ -167,4 +168,4 @@ for video_name in tqdm(video_names):
         save_path = os.path.join(video_out_dir, f"frame_{i:02d}.jpg")
         cv2.imwrite(save_path, img_bgr)
 
-print("✅ DONE: 5 best frames per video saved.")
+print("DONE: 5 best frames per video saved.")
