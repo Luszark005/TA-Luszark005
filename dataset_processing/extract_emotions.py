@@ -6,10 +6,13 @@ from deepface import DeepFace
 from tqdm import tqdm
 
 # ================= CONFIG =================
+BASE_DIR = '/content/drive/MyDrive/Dataset_TA/clean_dataset/'
+
 DATASET_CSV = '/content/annotation.csv'
-IMAGES_DIR = '/content/dataset/images/'   # hasil dari extract_cropped_frames
-FINAL_IMAGES_DIR = '/content/dataset/images_emotions' # folder baru untuk menyimpan frame yang sudah dipasangi emosi
-EMOTIONS_OUT_DIR = '/content/dataset/emotions'
+
+IMAGES_DIR = os.path.join(BASE_DIR, 'images/')
+FINAL_IMAGES_DIR = os.path.join(BASE_DIR, 'images_emotions/')
+EMOTIONS_OUT_DIR = os.path.join(BASE_DIR, 'emotions/')
 
 NUM_FRAMES = 5
 

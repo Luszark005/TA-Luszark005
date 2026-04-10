@@ -10,9 +10,13 @@ from tqdm import tqdm
 # =========================
 # CONFIG
 # =========================
+BASE_DIR = '/content/drive/MyDrive/Dataset_TA/clean_dataset/'
+
 FRAMES_DIR = '/content/frames/'
-OUTPUT_DIR = '/content/dataset/images/'
+OUTPUT_DIR = os.path.join(BASE_DIR, 'images/')
 ANNOTATION_CSV = '/content/annotation.csv'
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 NUM_SEGMENTS = 5
 SAMPLES_PER_SEGMENT = 5
@@ -20,7 +24,6 @@ IMG_SIZE = 224
 DEBUG = False
 
 random.seed(42)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # =========================
 # DEVICE & MODEL
