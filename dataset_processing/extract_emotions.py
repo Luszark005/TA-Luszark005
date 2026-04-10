@@ -52,7 +52,7 @@ if __name__ == "__main__":
     video_names = df['video_name'].tolist()
 
     # testing cepat (optional)
-    video_names = video_names[:50]
+    #video_names = video_names[:50]
 
     print(f"🚀 Processing {len(video_names)} videos...")
 

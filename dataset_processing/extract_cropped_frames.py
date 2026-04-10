@@ -7,36 +7,41 @@ import torch
 from facenet_pytorch import MTCNN
 from tqdm import tqdm
 
-# Conmon Config 
+# =========================
+# CONFIG
+# =========================
 FRAMES_DIR = '/content/frames/'
 OUTPUT_DIR = '/content/dataset/images/'
 ANNOTATION_CSV = '/content/annotation.csv'
 
 NUM_SEGMENTS = 5
 SAMPLES_PER_SEGMENT = 5
+IMG_SIZE = 224
+DEBUG = False
 
 random.seed(42)
-
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Setup MTCNN dengan device yang sesuai (GPU jika tersedia, CPU jika tidak)
-# CPU cuman jaga-jaga aja walaupun gk perlu sih di konteks ini
+# =========================
+# DEVICE & MODEL
+# =========================
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-mtcnn = MTCNN(
-    keep_all=True,
-    device=device
-)
+mtcnn = MTCNN(keep_all=True, device=device)
 
+# =========================
+# LOAD DATA
+# =========================
 df = pd.read_csv(ANNOTATION_CSV)
 video_names = df['video_name'].tolist()
 
-# testing cepat, jangan lupa dihapus
-video_names = video_names[:50]
+if DEBUG:
+    video_names = video_names[:50]
 
-# Functions
-
+# =========================
+# FUNCTIONS
+# =========================
 def load_image(path):
     img = cv2.imread(path)
     if img is None:
@@ -67,26 +72,22 @@ def detect_face(image):
     boxes, probs, landmarks = mtcnn.detect(image, landmarks=True)
     return boxes, probs, landmarks
 
- # MAIN 
 
-for video_name in tqdm(video_names):
+# =========================
+# MAIN
+# =========================
+for idx, video_name in enumerate(tqdm(video_names)):
 
     base = os.path.splitext(video_name)[0]
     video_out_dir = os.path.join(OUTPUT_DIR, base)
     os.makedirs(video_out_dir, exist_ok=True)
 
-    # ambil semua frame milik video berdasarkan nama file
-    frames = [
-        f for f in os.listdir(FRAMES_DIR)
-        if f.startswith(base)
-    ]
+    frames = [f for f in os.listdir(FRAMES_DIR) if f.startswith(base)]
 
     if len(frames) == 0:
         continue
 
     frames = sorted(frames)
-
-    # split jadi 5 segment
     segments = np.array_split(frames, NUM_SEGMENTS)
 
     selected_frames = []
@@ -97,14 +98,10 @@ for video_name in tqdm(video_names):
         if len(segment) == 0:
             continue
 
-        # random sample max 5
         sampled = random.sample(segment, min(SAMPLES_PER_SEGMENT, len(segment)))
 
         best_score = float('-inf')
-        best_frame = None
         best_crop = None
-
-        fallback_frames = []
 
         for frame_name in sampled:
             frame_path = os.path.join(FRAMES_DIR, frame_name)
@@ -116,50 +113,76 @@ for video_name in tqdm(video_names):
             boxes, probs, landmarks = detect_face(image)
 
             if boxes is not None and landmarks is not None:
-                sharpness = compute_sharpness(image)
-                alignment = compute_landmark_alignment(landmarks)
-                score = 0.8 * sharpness + 0.2 * alignment
-
                 x1, y1, x2, y2 = boxes[0]
                 h, w, _ = image.shape
+
                 x1, y1 = int(max(0, x1)), int(max(0, y1))
                 x2, y2 = int(min(w, x2)), int(min(h, y2))
 
                 crop = image[y1:y2, x1:x2]
 
+                # =========================
+                # 🔥 RESIZE FACE
+                # =========================
+                crop = cv2.resize(crop, (IMG_SIZE, IMG_SIZE))
+
+                sharpness = compute_sharpness(crop)
+                alignment = compute_landmark_alignment(landmarks)
+
+                score = 0.8 * sharpness + 0.2 * alignment
+
                 if score > best_score:
                     best_score = score
-                    best_frame = frame_name
                     best_crop = crop
 
-            else:
-                fallback_frames.append(frame_name)
-
-        # Fallback jika semua sampled frames gagal deteksi wajah → coba random frame dari segment sampai dapat crop wajah terbaik
+        # =========================
+        # FALLBACK
+        # =========================
         if best_crop is None:
-            # ambil random frame dari segment
             fallback_choice = random.choice(segment)
             frame_path = os.path.join(FRAMES_DIR, fallback_choice)
             image = load_image(frame_path)
 
-            if image is None:
-                continue
+            if image is not None:
+                boxes, _, _ = detect_face(image)
 
-            boxes, _, _ = detect_face(image)
+                if boxes is not None:
+                    x1, y1, x2, y2 = boxes[0]
+                    h, w, _ = image.shape
 
-            if boxes is not None:
-                x1, y1, x2, y2 = boxes[0]
-                h, w, _ = image.shape
-                x1, y1 = int(max(0, x1)), int(max(0, y1))
-                x2, y2 = int(min(w, x2)), int(min(h, y2))
-                best_crop = image[y1:y2, x1:x2]
-            else:
-                # kalau tetap gagal → pakai full image
-                best_crop = image
+                    x1, y1 = int(max(0, x1)), int(max(0, y1))
+                    x2, y2 = int(min(w, x2)), int(min(h, y2))
+
+                    best_crop = image[y1:y2, x1:x2]
+                else:
+                    # fallback full image
+                    best_crop = image
+
+                # 🔥 RESIZE fallback juga
+                best_crop = cv2.resize(best_crop, (IMG_SIZE, IMG_SIZE))
 
         selected_frames.append(best_crop)
 
-    # Simpan 5 frame terbaik 
+    # =========================
+    # ENSURE FIXED LENGTH (NO BLACK FRAME)
+    # =========================
+    while len(selected_frames) < NUM_SEGMENTS:
+        if len(selected_frames) > 0:
+            # duplikat frame terakhir
+            selected_frames.append(selected_frames[-1])
+        else:
+            # fallback: ambil frame random dari video asli
+            fallback_frame = random.choice(frames)
+            frame_path = os.path.join(FRAMES_DIR, fallback_frame)
+            image = load_image(frame_path)
+
+            if image is not None:
+                image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
+                selected_frames.append(image)
+
+    # =========================
+    # SAVE RESULT
+    # =========================
     for i, img in enumerate(selected_frames):
         if img is None:
             continue
@@ -168,4 +191,22 @@ for video_name in tqdm(video_names):
         save_path = os.path.join(video_out_dir, f"frame_{i:02d}.jpg")
         cv2.imwrite(save_path, img_bgr)
 
-print("DONE: 5 best frames per video saved.")
+    # =========================
+    # DELETE RAW FRAMES
+    # =========================
+    if not DEBUG:
+        for frame_name in frames:
+            frame_path = os.path.join(FRAMES_DIR, frame_name)
+            try:
+                if os.path.exists(frame_path):
+                    os.remove(frame_path)
+            except Exception as e:
+                print(f"Gagal hapus {frame_path}: {e}")
+
+    # =========================
+    # 🔥 LOGGING PROGRESS
+    # =========================
+    if idx % 100 == 0:
+        print(f"[INFO] Processed {idx}/{len(video_names)} videos")
+
+print("✅ DONE: 5 best frames per video saved.")

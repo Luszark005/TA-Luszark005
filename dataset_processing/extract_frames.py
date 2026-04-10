@@ -3,35 +3,48 @@ import cv2
 import os
 from multiprocessing import Pool
 
-# Setup Config
+# =========================
+# CONFIG
+# =========================
 video_root = '/content/drive/MyDrive/Dataset_TA/'
 phases = ['training', 'validation', 'test']
 
 output_folder = '/content/frames/'
 os.makedirs(output_folder, exist_ok=True)
 
-# Mendapatkan daftar video yang akan diproses
-df = pd.read_csv('annotation.csv')
+ANNOTATION_CSV = 'annotation.csv'
+DEBUG = False  # ubah ke True kalau mau testing cepat
+
+# =========================
+# LOAD VIDEO LIST
+# =========================
+df = pd.read_csv(ANNOTATION_CSV)
 videos = df['video_name'].tolist()
 
-# Keperluan Testing Pipeline, jangan lupa dihapus
-videos = videos[:50]  # Hanya proses 50 video pertama untuk testing cepat
+if DEBUG:
+    videos = videos[:50]
 
-# Mencegah error jika jumlah video lebih sedikit dari jumlah CPU
+# =========================
+# MULTIPROCESS SETUP
+# =========================
 cpu_count = os.cpu_count() or 1
 chunk_size = max(1, len(videos) // cpu_count)
 video_chunks = [videos[i:i + chunk_size] for i in range(0, len(videos), chunk_size)]
 
 
-# Main function untuk memproses chunk video
+# =========================
+# MAIN FUNCTION
+# =========================
 def process_video_chunk(video_chunk):
     for video_file in video_chunk:
         try:
-            # Memastikan nama video PUNYA ekstensi .mp4
+            # Pastikan .mp4
             if not str(video_file).endswith('.mp4'):
                 video_file = str(video_file) + '.mp4'
 
-            # Cari video di semua phase
+            base_name = os.path.splitext(video_file)[0]
+
+            # Cari path video
             video_path = None
             for phase in phases:
                 temp_path = os.path.join(video_root, phase, video_file)
@@ -39,7 +52,6 @@ def process_video_chunk(video_chunk):
                     video_path = temp_path
                     break
 
-            # Kalau tidak ditemukan
             if video_path is None:
                 print(f"⚠️ Video tidak ditemukan: {video_file}")
                 continue
@@ -50,10 +62,6 @@ def process_video_chunk(video_chunk):
                 print(f"⚠️ Gagal membuka video: {video_file}")
                 continue
 
-            fps = int(cap.get(cv2.CAP_PROP_FPS))
-            if fps == 0:
-                fps = 25  # fallback aman
-
             frame_count = 0
 
             while True:
@@ -61,28 +69,32 @@ def process_video_chunk(video_chunk):
                 if not ret:
                     break
 
-                # Ambil 1 frame per detik
-                if frame_count % fps == 0:
-                    frame_filename = os.path.join(
-                        output_folder,
-                        f"{os.path.splitext(video_file)[0]}_frame{frame_count}.jpg"
-                    )
-                    cv2.imwrite(frame_filename, frame)
+                # =========================
+                # SAVE SEMUA FRAME
+                # =========================
+                frame_filename = os.path.join(
+                    output_folder,
+                    f"{base_name}_frame{frame_count:05d}.jpg"
+                )
+
+                cv2.imwrite(frame_filename, frame)
 
                 frame_count += 1
 
             cap.release()
 
         except Exception as e:
-            print(f"Error pada video {video_file}: {e}") # debugging statement
+            print(f"❌ Error pada video {video_file}: {e}")
 
 
-# Run multiprocessing untuk ekstraksi frame
+# =========================
+# RUN
+# =========================
 if __name__ == '__main__':
-    print(f"🚀 Memulai ekstraksi {len(videos)} video menggunakan {cpu_count} CPU core...")
-    print("⏳ Proses ini bisa memakan waktu cukup lama...")
+    print(f"🚀 Ekstraksi {len(videos)} video menggunakan {cpu_count} CPU core...")
+    print("⏳ Proses bisa lama tergantung jumlah video...")
 
     with Pool(processes=cpu_count) as pool:
         pool.map(process_video_chunk, video_chunks)
 
-    print("SUCCESS: Semua frame berhasil diekstrak ke folder /content/frames/") # debugging statement
+    print("✅ DONE: Semua frame berhasil diekstrak.")
