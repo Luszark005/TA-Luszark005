@@ -20,6 +20,7 @@ ANNOTATION_CSV = 'annotation.csv'
 
 NUM_SEGMENTS = 5
 FRAME_STRIDE = 5
+BATCH_SIZE = 1000
 DEBUG = False
 
 # =========================
@@ -64,6 +65,10 @@ def compute_landmark_alignment(landmarks):
     return -nose_offset + symmetry_score
 
 
+def split_batches(data, batch_size):
+    return [data[i:i + batch_size] for i in range(0, len(data), batch_size)]
+
+
 # =========================
 # MAIN PROCESS FUNCTION
 # =========================
@@ -75,6 +80,15 @@ def process_video(video_file):
 
         base = os.path.splitext(video_file)[0]
         video_out_dir = os.path.join(OUTPUT_DIR, base)
+
+        # =========================
+        # 🔥 GRANULAR SKIP
+        # =========================
+        if os.path.exists(video_out_dir):
+            existing_files = [f for f in os.listdir(video_out_dir) if f.endswith('.jpg')]
+            if len(existing_files) >= NUM_SEGMENTS:
+                return
+
         os.makedirs(video_out_dir, exist_ok=True)
 
         # cari video path
@@ -113,7 +127,7 @@ def process_video(video_file):
         cap.release()
 
         # =========================
-        # SELECT BEST FRAME (UPGRADED)
+        # SELECT BEST FRAME
         # =========================
         selected_frames = []
 
@@ -131,7 +145,6 @@ def process_video(video_file):
                 boxes, probs, landmarks = mtcnn.detect(rgb, landmarks=True)
 
                 if boxes is not None and landmarks is not None:
-
                     sharpness = compute_sharpness(frame)
                     alignment = compute_landmark_alignment(landmarks)
 
@@ -147,9 +160,6 @@ def process_video(video_file):
 
             selected_frames.append(best_frame)
 
-        # =========================
-        # ENSURE 5 FRAME
-        # =========================
         if len(selected_frames) == 0:
             return
 
@@ -168,11 +178,18 @@ def process_video(video_file):
 
 
 # =========================
-# RUN
+# RUN (BATCH + RESUME)
 # =========================
 if __name__ == '__main__':
 
-    for video_file in tqdm(videos, desc="Processing Videos"):
-        process_video(video_file)
+    batches = split_batches(videos, BATCH_SIZE)
 
-    print("✅ DONE: Direct best-frame extraction selesai")
+    for i, batch in enumerate(batches):
+        print(f"\n🚀 Processing batch {i} ({len(batch)} videos)\n")
+
+        for video_file in tqdm(batch, desc=f"Batch {i}"):
+            process_video(video_file)
+
+        print(f"✅ Finished batch {i}")
+
+    print("\n🎉 ALL DONE")
