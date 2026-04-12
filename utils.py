@@ -6,14 +6,21 @@ import shutil
 import numpy as np
 import torch
 
+# NEW IMPORTS
+from sklearn.metrics import f1_score, precision_score, recall_score, mean_absolute_error, mean_squared_error, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+
 def set_random_seed(seed):
-    torch.manual_seed(seed)       # Current CPU
-    torch.cuda.manual_seed(seed)  # Current GPU
-    np.random.seed(seed)          # Numpy module
-    random.seed(seed)             # Python random module
-    torch.backends.cudnn.benchmark = False    # Close optimization
-    torch.backends.cudnn.deterministic = True # Close optimization
-    torch.cuda.manual_seed_all(seed) # All GPU (Optional)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.cuda.manual_seed_all(seed)
+
 
 class Logger():
     def __init__(self, logfile):
@@ -38,10 +45,8 @@ class Logger():
             print(msg)
             self.logger.info(msg)
 
+
 class AverageMeter(object):
-    """Computes and stores the average and current value
-       Imported from https://github.com/pytorch/examples/blob/master/imagenet/main.py#L247-L262
-    """
     def __init__(self):
         self.reset()
 
@@ -57,6 +62,67 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
+# ================= NEW METRICS ================= #
+
+def calculate_metrics(outputs, targets):
+    if isinstance(outputs, torch.Tensor):
+        outputs = outputs.detach().cpu()
+    if isinstance(targets, torch.Tensor):
+        targets = targets.detach().cpu()
+
+    preds = torch.argmax(outputs, dim=1)
+
+    y_true = targets.numpy()
+    y_pred = preds.numpy()
+
+    f1 = f1_score(y_true, y_pred, average='weighted')
+    precision = precision_score(y_true, y_pred, average='weighted', zero_division=0)
+    recall = recall_score(y_true, y_pred, average='weighted', zero_division=0)
+
+    mae = mean_absolute_error(y_true, y_pred)
+    rmse = mean_squared_error(y_true, y_pred, squared=False)
+
+    return {
+        'f1_weighted': f1,
+        'precision_weighted': precision,
+        'recall_weighted': recall,
+        'mae': mae,
+        'rmse': rmse
+    }
+
+
+def plot_confusion_matrix(outputs, targets, trait_name, save_path):
+    if isinstance(outputs, torch.Tensor):
+        outputs = outputs.detach().cpu()
+    if isinstance(targets, torch.Tensor):
+        targets = targets.detach().cpu()
+
+    preds = torch.argmax(outputs, dim=1)
+
+    y_true = targets.numpy()
+    y_pred = preds.numpy()
+
+    class_labels = ['Very Low', 'Low', 'High', 'Very High']
+
+    cm = confusion_matrix(y_true, y_pred)
+
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=class_labels,
+                yticklabels=class_labels)
+
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.title(f'Confusion Matrix - {trait_name}')
+
+    os.makedirs(save_path, exist_ok=True)
+    plt.savefig(os.path.join(save_path, f'cm_{trait_name}.png'))
+    plt.close()
+
+
+# ================= EXISTING FUNCTIONS ================= #
+
 def generate_adaptive_LD(outputs, targets, num_classes, threshold, sharpen, T):
     LD = []
     for i in range(5):
@@ -71,46 +137,18 @@ def generate_adaptive_LD(outputs, targets, num_classes, threshold, sharpen, T):
 
         for j in range(num_classes):
             idxs = np.where(targets_l.cpu().numpy()==j)[0]
-            if torch.mean(probs[idxs], dim=0)[j] >= threshold:
+            if len(idxs) > 0 and torch.mean(probs[idxs], dim=0)[j] >= threshold:
                 LD[i][j] = torch.mean(probs[idxs], dim=0)
             else:
                 LD[i][j] = torch.zeros(num_classes).fill_(0.4/(num_classes-1)).scatter_(0, torch.tensor(j), threshold)
 
-        if sharpen == True:
+        if sharpen:
             LD[i] = torch.pow(LD[i], 1/T) / torch.sum(torch.pow(LD[i], 1/T), dim=1)
         
     return LD
 
-def generate_average_weights(weights, targets, num_classes, max_weight, min_weight):
-    weights_avg = []
-    weights_max = []
-    weights_min = []
-    for j in range(5):
-        weights_l = weights[j][1:]
-        targets_l = targets[j][1:]
-
-        weights_l = ((weights_l - weights_l.min()) / (weights_l.max() - weights_l.min())) * (max_weight-min_weight) + min_weight
-
-        
-        w_avg = []
-        w_max = []
-        w_min = []
-
-        for i in range(num_classes):
-            idxs = np.where(targets_l.cpu().numpy()==i)[0]
-            weights_i = weights_l[idxs]
-            w_avg.append(weights_i.mean().item())
-            w_max.append(weights_i.max().item())
-            w_min.append(weights_i.min().item())
-        
-        weights_avg.append(w_avg)
-        weights_max.append(w_max)
-        weights_min.append(w_min)
-
-    return weights_avg, weights_max, weights_min
 
 def get_accuracy(outputs, targets, topk=(1,)):
-    """Computes the precision@k for the specified values of k"""
     maxk = max(topk)
     batch_size = targets.size(0)
 
@@ -124,9 +162,9 @@ def get_accuracy(outputs, targets, topk=(1,)):
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
 
+
 def save_checkpoint(state, is_best, checkpoint='./checkpoints', filename='checkpoint.pth.tar'):
-    if os.path.exists(checkpoint) != True:
-        os.makedirs(checkpoint)
+    os.makedirs(checkpoint, exist_ok=True)
     filepath = os.path.join(checkpoint, filename)
     torch.save(state, filepath)
     if is_best:

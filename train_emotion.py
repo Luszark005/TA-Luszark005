@@ -44,7 +44,7 @@ args = parser.parse_args()
 device = torch.device(f'cuda:{args.device_id}' if torch.cuda.is_available() else 'cpu')
 
 def main():
-    best_acc = 0
+    best_acc = -float('inf')  # 🔥 karena sekarang pakai score (bisa negatif)
     best_epoch = 0
     set_random_seed(42)
 
@@ -53,19 +53,26 @@ def main():
     logger.info(args)
     writer = SummaryWriter(f'./runs/Swin_Emotion_{timestamp}')
 
-    # 1. Inisialisasi Label Distribution (LD) untuk 5 Trait
+    # 1. Inisialisasi Label Distribution (LD)
     LD = [torch.zeros(args.num_classes, args.num_classes).to(device) for _ in range(5)]
     for i in range(5):
         for j in range(args.num_classes):
-            LD[i][j] = torch.zeros(args.num_classes).fill_((1-args.threshold)/(args.num_classes-1)).scatter_(0, torch.tensor(j), args.threshold)
+            LD[i][j] = torch.zeros(args.num_classes).fill_(
+                (1 - args.threshold) / (args.num_classes - 1)
+            ).scatter_(0, torch.tensor(j), args.threshold)
+
         if args.sharpen:
-            LD[i] = torch.pow(LD[i], 1/args.T) / torch.sum(torch.pow(LD[i], 1/args.T), dim=1)
+            LD[i] = torch.pow(LD[i], 1 / args.T) / torch.sum(
+                torch.pow(LD[i], 1 / args.T), dim=1
+            )
 
     # 2. Load Model & Data
     model = create_model(num_classes=args.num_classes, drop_rate=args.drop_rate).to(device)
-    train_loader, val_loader = get_dataloader(args.data_path, args.batch_size, args.num_workers, num_frames=args.num_frames)
+    train_loader, val_loader = get_dataloader(
+        args.data_path, args.batch_size, args.num_workers, num_frames=args.num_frames
+    )
 
-    # 3. Loss & Optimizer (AdamW untuk Swin Transformer)
+    # 3. Loss & Optimizer
     criterion_ce = nn.CrossEntropyLoss(reduction='none')
     criterion_kld = nn.KLDivLoss(reduction='none')
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
@@ -74,26 +81,80 @@ def main():
     logger.info('Mulai Pelatihan Swin Transformer + Ada-DF...')
 
     for epoch in range(1, args.epochs + 1):
-        # TRAIN
-        tr_loss, tr_ce, tr_kld, a1, a2 = train(train_loader, model, criterion_ce, criterion_kld, optimizer, LD, epoch, args.accumulation_steps)
-        
-        # VALIDATE (Mendapatkan output untuk update LD)
-        val_loss, val_acc, outputs_val, targets_val, weights_val = validate(val_loader, model, criterion_ce, epoch)
 
-        # 4. Update Adaptive Distribution (Ada-DF)
-        LD = generate_adaptive_LD(outputs_val, targets_val, args.num_classes, args.threshold, args.sharpen, args.T)
+        # ================= TRAIN =================
+        tr_loss, tr_ce, tr_kld, a1, a2 = train(
+            train_loader, model, criterion_ce, criterion_kld,
+            optimizer, LD, epoch, args.accumulation_steps
+        )
 
-        # Logging
-        logger.info(f'Epoch {epoch} | Val Acc: {val_acc:.2f}% | Loss: {val_loss:.4f} | LR: {optimizer.param_groups[0]["lr"]:.6f}')
-        writer.add_scalar('Accuracy/Val', val_acc, epoch)
-        writer.add_scalar('Loss/Val', val_loss, epoch)
+        # ================= VALIDATE =================
+        val_loss, val_acc, outputs_val, targets_val, weights_val = validate(
+            val_loader, model, criterion_ce, epoch
+        )
 
-        # Save Checkpoint
-        is_best = val_acc > best_acc
+        # ================= UPDATE LD =================
+        LD = generate_adaptive_LD(
+            outputs_val, targets_val,
+            args.num_classes, args.threshold,
+            args.sharpen, args.T
+        )
+
+        # ================= NEW METRICS =================
+        all_metrics = []
+        for j in range(5):
+            metrics = calculate_metrics(outputs_val[j], targets_val[j])
+            all_metrics.append(metrics)
+
+        # ================= AGGREGATE SCORE =================
+        mean_f1 = np.mean([m['f1_weighted'] for m in all_metrics])
+        mean_mae = np.mean([m['mae'] for m in all_metrics])
+        score = mean_f1 - mean_mae  # 🔥 hybrid metric
+
+        # ================= LOGGING =================
+        logger.info(
+            f'Epoch {epoch} | Score: {score:.4f} | '
+            f'F1: {mean_f1:.4f} | MAE: {mean_mae:.4f} | '
+            f'Val Acc: {val_acc:.2f}% | Loss: {val_loss:.4f} | '
+            f'LR: {optimizer.param_groups[0]["lr"]:.6f}'
+        )
+
+        writer.add_scalar('Score', score, epoch)
+        writer.add_scalar('F1/Mean', mean_f1, epoch)
+        writer.add_scalar('MAE/Mean', mean_mae, epoch)
+
+        # ================= PER TRAIT LOG =================
+        traits = ['O', 'C', 'E', 'A', 'N']
+        for i, trait in enumerate(traits):
+            m = all_metrics[i]
+
+            logger.info(
+                f"{trait} | F1: {m['f1_weighted']:.4f} | "
+                f"Prec: {m['precision_weighted']:.4f} | "
+                f"Rec: {m['recall_weighted']:.4f} | "
+                f"MAE: {m['mae']:.4f} | RMSE: {m['rmse']:.4f}"
+            )
+
+            writer.add_scalar(f'{trait}/F1', m['f1_weighted'], epoch)
+            writer.add_scalar(f'{trait}/MAE', m['mae'], epoch)
+            writer.add_scalar(f'{trait}/RMSE', m['rmse'], epoch)
+
+        # ================= CONFUSION MATRIX =================
+        if epoch % 5 == 0:
+            for i, trait in enumerate(traits):
+                plot_confusion_matrix(
+                    outputs_val[i],
+                    targets_val[i],
+                    trait,
+                    './results_emotions/cm'
+                )
+
+        # ================= SAVE BEST MODEL =================
+        is_best = score > best_acc
         if is_best:
-            best_acc = val_acc
+            best_acc = score
             best_epoch = epoch
-        
+
         save_checkpoint({
             'epoch': epoch,
             'state_dict': model.state_dict(),
@@ -101,10 +162,11 @@ def main():
             'optimizer': optimizer.state_dict(),
         }, is_best, checkpoint='./checkpoints_swin')
 
-        if epoch - best_epoch > 10: # Early Stopping sederhana
+        # ================= EARLY STOPPING =================
+        if epoch - best_epoch > 10:
             logger.info("Early stopping...")
             break
-        
+
         scheduler.step()
 
 def train(train_loader, model, criterion_ce, criterion_kld, optimizer, LD, epoch, accumulation_steps):
@@ -212,3 +274,71 @@ def validate(loader, model, criterion, epoch):
 
 if __name__ == '__main__':
     main()
+
+
+# Previous code for confusion matrix visualization (not used in main training loop, but can be called after training for analysis)
+"""
+def main():
+    best_acc = 0
+    best_epoch = 0
+    set_random_seed(42)
+
+    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M')
+    logger = Logger(f'./results_emotions/log-{timestamp}.txt')
+    logger.info(args)
+    writer = SummaryWriter(f'./runs/Swin_Emotion_{timestamp}')
+
+    # 1. Inisialisasi Label Distribution (LD) untuk 5 Trait
+    LD = [torch.zeros(args.num_classes, args.num_classes).to(device) for _ in range(5)]
+    for i in range(5):
+        for j in range(args.num_classes):
+            LD[i][j] = torch.zeros(args.num_classes).fill_((1-args.threshold)/(args.num_classes-1)).scatter_(0, torch.tensor(j), args.threshold)
+        if args.sharpen:
+            LD[i] = torch.pow(LD[i], 1/args.T) / torch.sum(torch.pow(LD[i], 1/args.T), dim=1)
+
+    # 2. Load Model & Data
+    model = create_model(num_classes=args.num_classes, drop_rate=args.drop_rate).to(device)
+    train_loader, val_loader = get_dataloader(args.data_path, args.batch_size, args.num_workers, num_frames=args.num_frames)
+
+    # 3. Loss & Optimizer (AdamW untuk Swin Transformer)
+    criterion_ce = nn.CrossEntropyLoss(reduction='none')
+    criterion_kld = nn.KLDivLoss(reduction='none')
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
+
+    logger.info('Mulai Pelatihan Swin Transformer + Ada-DF...')
+
+    for epoch in range(1, args.epochs + 1):
+        # TRAIN
+        tr_loss, tr_ce, tr_kld, a1, a2 = train(train_loader, model, criterion_ce, criterion_kld, optimizer, LD, epoch, args.accumulation_steps)
+        
+        # VALIDATE (Mendapatkan output untuk update LD)
+        val_loss, val_acc, outputs_val, targets_val, weights_val = validate(val_loader, model, criterion_ce, epoch)
+
+        # 4. Update Adaptive Distribution (Ada-DF)
+        LD = generate_adaptive_LD(outputs_val, targets_val, args.num_classes, args.threshold, args.sharpen, args.T)
+
+        # Logging
+        logger.info(f'Epoch {epoch} | Val Acc: {val_acc:.2f}% | Loss: {val_loss:.4f} | LR: {optimizer.param_groups[0]["lr"]:.6f}')
+        writer.add_scalar('Accuracy/Val', val_acc, epoch)
+        writer.add_scalar('Loss/Val', val_loss, epoch)
+
+        # Save Checkpoint
+        is_best = val_acc > best_acc
+        if is_best:
+            best_acc = val_acc
+            best_epoch = epoch
+        
+        save_checkpoint({
+            'epoch': epoch,
+            'state_dict': model.state_dict(),
+            'best_acc': best_acc,
+            'optimizer': optimizer.state_dict(),
+        }, is_best, checkpoint='./checkpoints_swin')
+
+        if epoch - best_epoch > 10: # Early Stopping sederhana
+            logger.info("Early stopping...")
+            break
+        
+        scheduler.step()
+"""
