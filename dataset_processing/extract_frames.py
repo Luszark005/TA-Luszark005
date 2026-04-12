@@ -21,7 +21,7 @@ ANNOTATION_CSV = 'annotation.csv'
 NUM_SEGMENTS = 5
 FRAME_STRIDE = 5
 BATCH_SIZE = 1000
-MTCNN_BATCH = 128   # 🔥 ini kunci performa (bisa 8–32 tergantung GPU)
+MTCNN_BATCH = 128   # 🔥 bisa 32–128 (tuning sesuai GPU)
 DEBUG = False
 
 # =========================
@@ -71,7 +71,7 @@ def split_batches(data, batch_size):
 
 
 # =========================
-# 🔥 BATCH DETECTION FUNCTION
+# GLOBAL BATCH DETECTION
 # =========================
 def batch_detect(frames):
 
@@ -95,7 +95,7 @@ def batch_detect(frames):
 
 
 # =========================
-# MAIN PROCESS FUNCTION
+# MAIN PROCESS
 # =========================
 def process_video(video_file):
 
@@ -106,7 +106,7 @@ def process_video(video_file):
         base = os.path.splitext(video_file)[0]
         video_out_dir = os.path.join(OUTPUT_DIR, base)
 
-        # 🔥 GRANULAR SKIP
+        # 🔥 GRANULAR RESUME
         if os.path.exists(video_out_dir):
             existing = [f for f in os.listdir(video_out_dir) if f.endswith('.jpg')]
             if len(existing) >= NUM_SEGMENTS:
@@ -114,7 +114,7 @@ def process_video(video_file):
 
         os.makedirs(video_out_dir, exist_ok=True)
 
-        # cari video
+        # cari video path
         video_path = None
         for phase in phases:
             temp = os.path.join(video_root, phase, video_file)
@@ -142,6 +142,7 @@ def process_video(video_file):
             if frame_idx % FRAME_STRIDE == 0:
                 seg_idx = int((frame_idx / total_frames) * NUM_SEGMENTS)
                 seg_idx = min(seg_idx, NUM_SEGMENTS - 1)
+
                 segment_buffers[seg_idx].append(frame)
 
             frame_idx += 1
@@ -149,21 +150,43 @@ def process_video(video_file):
         cap.release()
 
         # =========================
-        # SELECT BEST FRAME (BATCH)
+        # 🔥 GLOBAL BATCH BUILD
+        # =========================
+        all_frames = []
+        segment_indices = []
+
+        for seg_idx, segment in enumerate(segment_buffers):
+            for frame in segment:
+                all_frames.append(frame)
+                segment_indices.append(seg_idx)
+
+        if len(all_frames) == 0:
+            return
+
+        detections = batch_detect(all_frames)
+
+        # =========================
+        # MAP BACK TO SEGMENTS
+        # =========================
+        segment_data = [[] for _ in range(NUM_SEGMENTS)]
+
+        for frame, det, seg_idx in zip(all_frames, detections, segment_indices):
+            segment_data[seg_idx].append((frame, det))
+
+        # =========================
+        # SELECT BEST FRAME
         # =========================
         selected_frames = []
 
-        for segment in segment_buffers:
+        for segment in segment_data:
 
             if len(segment) == 0:
                 continue
 
-            detections = batch_detect(segment)
-
             best_score = -float('inf')
             best_frame = None
 
-            for frame, (boxes, probs, landmarks) in zip(segment, detections):
+            for frame, (boxes, probs, landmarks) in segment:
 
                 if boxes is not None and landmarks is not None:
 
