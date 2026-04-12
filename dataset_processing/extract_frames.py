@@ -21,6 +21,7 @@ ANNOTATION_CSV = 'annotation.csv'
 NUM_SEGMENTS = 5
 FRAME_STRIDE = 5
 BATCH_SIZE = 1000
+MTCNN_BATCH = 16   # 🔥 ini kunci performa (bisa 8–32 tergantung GPU)
 DEBUG = False
 
 # =========================
@@ -70,6 +71,30 @@ def split_batches(data, batch_size):
 
 
 # =========================
+# 🔥 BATCH DETECTION FUNCTION
+# =========================
+def batch_detect(frames):
+
+    results = []
+
+    for i in range(0, len(frames), MTCNN_BATCH):
+        batch = frames[i:i + MTCNN_BATCH]
+
+        rgb_batch = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in batch]
+
+        boxes, probs, landmarks = mtcnn.detect(rgb_batch, landmarks=True)
+
+        for j in range(len(batch)):
+            results.append((
+                boxes[j] if boxes is not None else None,
+                probs[j] if probs is not None else None,
+                landmarks[j] if landmarks is not None else None
+            ))
+
+    return results
+
+
+# =========================
 # MAIN PROCESS FUNCTION
 # =========================
 def process_video(video_file):
@@ -81,22 +106,20 @@ def process_video(video_file):
         base = os.path.splitext(video_file)[0]
         video_out_dir = os.path.join(OUTPUT_DIR, base)
 
-        # =========================
         # 🔥 GRANULAR SKIP
-        # =========================
         if os.path.exists(video_out_dir):
-            existing_files = [f for f in os.listdir(video_out_dir) if f.endswith('.jpg')]
-            if len(existing_files) >= NUM_SEGMENTS:
+            existing = [f for f in os.listdir(video_out_dir) if f.endswith('.jpg')]
+            if len(existing) >= NUM_SEGMENTS:
                 return
 
         os.makedirs(video_out_dir, exist_ok=True)
 
-        # cari video path
+        # cari video
         video_path = None
         for phase in phases:
-            temp_path = os.path.join(video_root, phase, video_file)
-            if os.path.exists(temp_path):
-                video_path = temp_path
+            temp = os.path.join(video_root, phase, video_file)
+            if os.path.exists(temp):
+                video_path = temp
                 break
 
         if video_path is None:
@@ -117,17 +140,16 @@ def process_video(video_file):
                 break
 
             if frame_idx % FRAME_STRIDE == 0:
-                segment_idx = int((frame_idx / total_frames) * NUM_SEGMENTS)
-                segment_idx = min(segment_idx, NUM_SEGMENTS - 1)
-
-                segment_buffers[segment_idx].append(frame)
+                seg_idx = int((frame_idx / total_frames) * NUM_SEGMENTS)
+                seg_idx = min(seg_idx, NUM_SEGMENTS - 1)
+                segment_buffers[seg_idx].append(frame)
 
             frame_idx += 1
 
         cap.release()
 
         # =========================
-        # SELECT BEST FRAME
+        # SELECT BEST FRAME (BATCH)
         # =========================
         selected_frames = []
 
@@ -136,25 +158,24 @@ def process_video(video_file):
             if len(segment) == 0:
                 continue
 
+            detections = batch_detect(segment)
+
             best_score = -float('inf')
             best_frame = None
 
-            for frame in segment:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-                boxes, probs, landmarks = mtcnn.detect(rgb, landmarks=True)
+            for frame, (boxes, probs, landmarks) in zip(segment, detections):
 
                 if boxes is not None and landmarks is not None:
+
                     sharpness = compute_sharpness(frame)
                     alignment = compute_landmark_alignment(landmarks)
 
-                    final_score = 0.8 * sharpness + 0.2 * alignment
+                    score = 0.8 * sharpness + 0.2 * alignment
 
-                    if final_score > best_score:
-                        best_score = final_score
+                    if score > best_score:
+                        best_score = score
                         best_frame = frame
 
-            # fallback
             if best_frame is None:
                 best_frame = segment[0]
 
@@ -170,15 +191,15 @@ def process_video(video_file):
         # SAVE
         # =========================
         for i, frame in enumerate(selected_frames):
-            save_path = os.path.join(video_out_dir, f"frame_{i:02d}.jpg")
-            cv2.imwrite(save_path, frame)
+            path = os.path.join(video_out_dir, f"frame_{i:02d}.jpg")
+            cv2.imwrite(path, frame)
 
     except Exception as e:
         print(f"Error {video_file}: {e}")
 
 
 # =========================
-# RUN (BATCH + RESUME)
+# RUN
 # =========================
 if __name__ == '__main__':
 
