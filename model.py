@@ -25,7 +25,7 @@ class SwinMultiFrameEmotion(nn.Module):
         # Input: 7-dimensi vektor emosi dari DeepFace
         self.emotion_feature = nn.Sequential(
             nn.Linear(7, 128), 
-            nn.ReLU(), 
+            nn.ReLU(), # Bisa masuikin ke buku alasan kenapa pake ReLU
             nn.BatchNorm1d(128)
         )
         
@@ -34,7 +34,7 @@ class SwinMultiFrameEmotion(nn.Module):
         branch_dim = 512
         self.branch_1_feature = nn.Sequential(
             nn.Linear(swin_out_dim, branch_dim),
-            nn.GELU(),
+            nn.GELU(), # Bisa masuikin ke buku alasan kenapa pake GELU
             nn.Dropout(self.drop_rate)
         )
         self.branch_2_feature = copy.deepcopy(self.branch_1_feature)
