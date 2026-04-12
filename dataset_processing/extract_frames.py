@@ -21,7 +21,7 @@ ANNOTATION_CSV = 'annotation.csv'
 NUM_SEGMENTS = 5
 FRAME_STRIDE = 5
 BATCH_SIZE = 1000
-MTCNN_BATCH = 16   # 🔥 ini kunci performa (bisa 8–32 tergantung GPU)
+MTCNN_BATCH = 128   # 🔥 ini kunci performa (bisa 8–32 tergantung GPU)
 DEBUG = False
 
 # =========================
