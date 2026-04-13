@@ -66,8 +66,19 @@ if __name__ == "__main__":
         if not os.path.exists(video_folder):
             continue
 
+
+
+
         # folder output final (yang dipakai training)
+        emotion_file = os.path.join(EMOTIONS_OUT_DIR, f"{video_basename}.npy")
         final_video_img_dir = os.path.join(FINAL_IMAGES_DIR, video_basename)
+
+        # 🔥 checkpoint robust
+        if os.path.exists(emotion_file) and os.path.exists(final_video_img_dir):
+            existing = [f for f in os.listdir(final_video_img_dir) if f.endswith('.jpg')]
+            if len(existing) == NUM_FRAMES:
+                continue
+
         os.makedirs(final_video_img_dir, exist_ok=True)
 
         emotion_sequence = []
