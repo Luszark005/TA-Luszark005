@@ -56,6 +56,15 @@ for idx, video_name in enumerate(tqdm(video_names)):
     input_video_dir = os.path.join(INPUT_DIR, base)
     output_video_dir = os.path.join(OUTPUT_DIR, base)
 
+    # =========================
+    # 🔥 GRANULAR CHECKPOINT
+    # =========================
+    expected_frames = len(os.listdir(input_video_dir))
+    if os.path.exists(output_video_dir):
+        existing = [f for f in os.listdir(output_video_dir) if f.endswith('.jpg')]
+        if len(existing) == expected_frames:
+            continue
+
     if not os.path.exists(input_video_dir):
         continue
 
