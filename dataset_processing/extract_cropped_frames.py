@@ -70,7 +70,7 @@ for idx, video_name in enumerate(tqdm(video_names)):
         if image is None:
             continue
 
-        boxes, probs, landmarks = mtcnn.detect(image)
+        boxes, probs = mtcnn.detect(image)
 
         # =========================
         # FACE CROP
