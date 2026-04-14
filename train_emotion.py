@@ -13,7 +13,7 @@ from dataset import get_dataloader
 from model import create_model
 from utils import (
     set_random_seed, Logger, AverageMeter,
-    generate_adaptive_LD, generate_average_weights,
+    generate_adaptive_LD,
     get_accuracy, save_checkpoint,
     calculate_metrics, plot_confusion_matrix   
 )
