@@ -31,8 +31,8 @@ class FirstImpressionsVideoDataset(Dataset):
 
     def __getitem__(self, idx):
         video_basename = self.video_names[idx]
-        # Folder images sekarang merujuk ke folder 'images' hasil penyelarasan
-        frames_dir = os.path.join(self.data_path, 'images', video_basename)
+        # Folder images sekarang merujuk ke folder 'images_cropped' hasil penyelarasan
+        frames_dir = os.path.join(self.data_path, 'images_cropped', video_basename)
         frames = []
         
         # Loaad Frames (linear index)

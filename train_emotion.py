@@ -11,7 +11,12 @@ from tqdm import tqdm
 
 from dataset import get_dataloader
 from model import create_model
-from utils import set_random_seed, Logger, AverageMeter, generate_adaptive_LD, generate_average_weights, get_accuracy, save_checkpoint
+from utils import (
+    set_random_seed, Logger, AverageMeter,
+    generate_adaptive_LD, generate_average_weights,
+    get_accuracy, save_checkpoint,
+    calculate_metrics, plot_confusion_matrix   
+)
 
 parser = argparse.ArgumentParser(description='PyTorch Training Swin-Emotion Ada-DF')
 # train configs
