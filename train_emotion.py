@@ -18,7 +18,11 @@ from utils import (
     calculate_metrics, plot_confusion_matrix   
 )
 
+# ================= ARGUMENT =================
 parser = argparse.ArgumentParser(description='PyTorch Training Swin-Emotion Ada-DF')
+parser.add_argument('--resume', default='', type=str, help='path to checkpoint') # checkpoint
+parser.add_argument('--output_dir', default='./checkpoints_swin', type=str)
+
 # train configs
 parser.add_argument('--epochs', default=75, type=int)
 parser.add_argument('--batch_size', default=4, type=int) 
@@ -42,13 +46,23 @@ parser.add_argument('--tops', default=0.7, type=float)
 # common configs
 parser.add_argument('--data_path', default='./dataset', type=str)
 parser.add_argument('--num_workers', default=4, type=int)
-parser.add_argument('--device_id', default=0, type=int)
-
+   
 args = parser.parse_args()
 
-device = torch.device(f'cuda:{args.device_id}' if torch.cuda.is_available() else 'cpu')
+# ================= DEVICE =================
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    print("Using GPU:", torch.cuda.get_device_name(0))
+else:
+    device = torch.device("cpu")
+    print("Using CPU")
 
 def main():
+    print("Data path:", args.data_path)
+
+    if not os.path.exists(args.data_path):
+        raise ValueError(f"Data path not found: {args.data_path}")
+
     best_acc = -float('inf')  # 🔥 karena sekarang pakai score (bisa negatif)
     best_epoch = 0
     set_random_seed(42)
@@ -62,30 +76,43 @@ def main():
     LD = [torch.zeros(args.num_classes, args.num_classes).to(device) for _ in range(5)]
     for i in range(5):
         for j in range(args.num_classes):
-            LD[i][j] = torch.zeros(args.num_classes).fill_(
-                (1 - args.threshold) / (args.num_classes - 1)
-            ).scatter_(0, torch.tensor(j), args.threshold)
-
+            LD[i][j] = torch.zeros(args.num_classes).fill_((1-args.threshold)/(args.num_classes-1)).scatter_(0, torch.tensor(j), args.threshold)
         if args.sharpen:
-            LD[i] = torch.pow(LD[i], 1 / args.T) / torch.sum(
-                torch.pow(LD[i], 1 / args.T), dim=1
-            )
+            LD[i] = torch.pow(LD[i], 1/args.T) / torch.sum(torch.pow(LD[i], 1/args.T), dim=1)
 
     # 2. Load Model & Data
     model = create_model(num_classes=args.num_classes, drop_rate=args.drop_rate).to(device)
+
+    # ================= OPTIMIZER =================
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
+
+    # ================= RESUME =================
+    start_epoch = 1
+
+    if args.resume and os.path.isfile(args.resume):
+        print(f"Loading checkpoint from {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=device)
+
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+
+        best_acc = checkpoint['best_acc']
+        start_epoch = checkpoint['epoch'] + 1
+
+        print(f"Resumed from epoch {checkpoint['epoch']}")
+
     train_loader, val_loader = get_dataloader(
         args.data_path, args.batch_size, args.num_workers, num_frames=args.num_frames
     )
 
-    # 3. Loss & Optimizer
+    # 3. Loss Functions
     criterion_ce = nn.CrossEntropyLoss(reduction='none')
     criterion_kld = nn.KLDivLoss(reduction='none')
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.05)
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
 
     logger.info('Mulai Pelatihan Swin Transformer + Ada-DF...')
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
 
         # ================= TRAIN =================
         tr_loss, tr_ce, tr_kld, a1, a2 = train(
@@ -165,12 +192,22 @@ def main():
             'state_dict': model.state_dict(),
             'best_acc': best_acc,
             'optimizer': optimizer.state_dict(),
-        }, is_best, checkpoint='./checkpoints_swin')
+        }, is_best, checkpoint=args.output_dir)
+
+        # ================= SAVE LAST =================
+        os.makedirs(args.output_dir, exist_ok=True)
+        torch.save({
+            'epoch': epoch,
+            'state_dict': model.state_dict(),
+            'best_acc': best_acc,
+            'optimizer': optimizer.state_dict(),
+        }, os.path.join(args.output_dir, 'last.pth'))
 
         # ================= EARLY STOPPING =================
         if epoch - best_epoch > 10:
             logger.info("Early stopping...")
             break
+        
 
         scheduler.step()
 

@@ -81,7 +81,7 @@ def calculate_metrics(outputs, targets):
     recall = recall_score(y_true, y_pred, average='weighted', zero_division=0)
 
     mae = mean_absolute_error(y_true, y_pred)
-    rmse = mean_squared_error(y_true, y_pred, squared=False)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
 
     return {
         'f1_weighted': f1,
